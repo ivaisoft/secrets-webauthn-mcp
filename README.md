@@ -1,0 +1,116 @@
+# bws-webauthn-mcp
+
+MCP server for **Bitwarden Secrets Manager** that lets an agent **use** a secret
+without ever seeing its value. Every use is authorized by a fresh **physical
+WebAuthn Approval** (Touch ID / passkey) via MCP **URL-mode elicitation**.
+
+```
+tool call → URL-mode elicitation → browser opens http://localhost:<auto-port>/approve
+          → SimpleWebAuthnBrowser.startAuthentication() (Touch ID / passkey)
+          → server verifies → secret fetched → injected into request/child → response returned
+```
+
+The `BWS_ACCESS_TOKEN` lives **only** inside this server process; the agent has no
+`bws` and no token. These two tools are the **sole** path to any secret, and the
+Gate is unbypassable. There is **no cache** — every single use requires its own
+fresh Approval (see [ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)).
+Secret values are **never** returned to the agent, placed in `argv`, or written to
+any log.
+
+## Tools
+
+Both require a fresh Approval and both accept a **list** of `secret_id`s (one touch
+authorizes the set). Neither ever returns a secret value.
+
+| Tool | What it does |
+|---|---|
+| `http_request({ url, method?, secret_ids, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
+| `run_with_secret({ argv, secret_ids, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the secret's Bitwarden key name; override per secret with `env_overrides`). Returns the child's stdout, stderr, and exit code. No allowlist — the Gate prompt shows the full `argv`, the injected env-var names, and the secret ids, and the human approves. |
+
+Reference secrets by **UUID**.
+
+## Requirements
+
+- Node 20+ (uses global `fetch`). WebAuthn works on `localhost` over http (secure
+  context, rpID `localhost`).
+- A Bitwarden Secrets Manager **machine-account access token**. Provision a
+  **dedicated read-only machine account scoped to a single project** — this server
+  does not protect against a stolen token (that is out of scope; least-privilege
+  scope is the only mitigation).
+
+## Setup
+
+```bash
+npm install
+npm run build
+BWS_ACCESS_TOKEN=... npm run register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
+```
+
+Credentials are stored as an **array** at
+`~/.config/bws-webauthn-mcp/credentials.json` (public key + counter + transports
+only, mode `0600` — no secret material). Any registered credential can Approve
+(e.g. Touch ID on the Mac plus a Google/Android passkey). The first credential is
+trust-on-first-use; adding further credentials requires an existing Approval.
+Serve mode does **not** serve registration.
+
+The host allowlist for `http_request` lives at
+`~/.config/bws-webauthn-mcp/allowlist.json`, mapping each `secret_id` to the hosts
+it may be sent to (missing entry = deny):
+
+```json
+{ "1234-secret-uuid": ["api.example.com"] }
+```
+
+## Wire into Claude Code
+
+```bash
+claude mcp add bws -- env BWS_ACCESS_TOKEN=<token> node /Users/danilo/Work/Projects/mcps/bws-webauthn-mcp/dist/index.js serve
+```
+
+or in `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "bws": {
+      "command": "node",
+      "args": ["/Users/danilo/Work/Projects/mcps/bws-webauthn-mcp/dist/index.js", "serve"],
+      "env": { "BWS_ACCESS_TOKEN": "<token>" }
+    }
+  }
+}
+```
+
+The approval server binds an **auto-picked free port** on `127.0.0.1`; the
+approval URL uses it. There is no fixed port to configure.
+
+## Env
+
+| Var | Default | |
+|---|---|---|
+| `BWS_ACCESS_TOKEN` | — | **required**, machine-account token |
+| `BWS_API_URL` / `BWS_IDENTITY_URL` | bitwarden.com | set for EU / self-host |
+| `BWS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
+
+## What this does and does not protect
+
+- **Protects**: the *release* of a secret. No value leaves Bitwarden without a
+  fresh physical touch, and the value is never returned to the conversation — the
+  agent only ever gets the HTTP response or the child's output.
+- **Does not undo a Consumer that reflects the secret**: if the endpoint or command
+  you invoke prints the injected value back, it returns to the agent — documented,
+  not enforced (same caveat as `bws run`).
+- **Local only.** The `localhost` rpID trick means this must run as a local stdio
+  server. Behind a real domain, WebAuthn re-binds to that domain and the model
+  changes (see [ADR 0003](./docs/adr/0003-local-stdio-only-not-clustered.md)).
+
+## Audit log
+
+Every attempt appends one JSONL line to `~/.config/bws-webauthn-mcp/audit.log`
+(`{ ts, tool, secret_ids, host|argv0, verified }`) — never the value.
+
+## Selfcheck
+
+```bash
+npm run selfcheck   # pure-logic checks (no vault access, no browser)
+```

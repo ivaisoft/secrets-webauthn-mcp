@@ -1,0 +1,28 @@
+{
+  "name": "bws-webauthn-mcp",
+  "version": "2.0.0",
+  "type": "module",
+  "description": "MCP server for Bitwarden Secrets Manager: the agent USES secrets it never sees, and every use is gated by a fresh physical WebAuthn Approval (Touch ID / passkey).",
+  "bin": { "bws-webauthn-mcp": "dist/index.js" },
+  "files": ["dist", "README.md", "SPEC.md", "CONTEXT.md"],
+  "scripts": {
+    "build": "tsc",
+    "serve": "node dist/index.js serve",
+    "start": "node dist/index.js serve",
+    "register": "tsx src/index.ts register",
+    "selfcheck": "tsx src/index.ts selfcheck",
+    "test": "tsx test/http_request.test.ts && tsx test/run_with_secret.test.ts"
+  },
+  "dependencies": {
+    "@bitwarden/sdk-napi": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
