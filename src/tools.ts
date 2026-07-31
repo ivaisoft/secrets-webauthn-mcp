@@ -12,6 +12,7 @@ import type { BwsGateway, SecretHandle } from "./bws.js";
 import { resolveEnvName } from "./envname.js";
 import type { Gate } from "./gate.js";
 import { requestKey } from "./request-key.js";
+import { formatArgv } from "./shell-format.js";
 import {
   EnvNameSchema,
   HttpRequestArgsSchema,
@@ -214,18 +215,24 @@ export function registerTools(ctx: ToolContext): void {
     },
     async (args: RunWithSecretArgs): Promise<ToolResult> => {
       const argv0 = args.argv[0]!;
-      // Show the human EXACTLY what each secret is injected as (SPEC: the Gate prompt
-      // shows argv + injected env-var names + secret ids). Secrets are not fetched
-      // before approval, so a default (no override) is shown as its Bitwarden key name.
+      // Show the human EXACTLY what each secret is injected as, including its real
+      // Bitwarden name — via listSecrets(), the SAME ungated {id,key} lookup
+      // list_secrets itself uses (ADR 0005). This never fetches a value, so it's
+      // safe to call before Approval; it only replaces a placeholder with real,
+      // already-non-sensitive metadata the human needs to know WHICH secret this is.
+      const knownSecrets = await bws.listSecrets().catch(() => []);
+      const keyById = new Map(knownSecrets.map((s) => [s.id, s.key]));
       const envDisplay = args.secret_ids
         .map((id) => {
-          const override = args.env_overrides?.[id];
-          return override ? `${id} → $${override}` : `${id} → $<its Bitwarden key name>`;
+          const keyName = keyById.get(id);
+          const label = keyName ? `${id} (${keyName})` : `${id} (not found via list_secrets)`;
+          const envName = args.env_overrides?.[id] ?? keyName ?? "<its Bitwarden key name>";
+          return `${label} → $${envName}`;
         })
         .join(", ");
       const message =
-        `run_with_secret wants to inject secret(s) as env vars [${envDisplay}] ` +
-        `and run (no shell): ${args.argv.join(" ")}`;
+        `run_with_secret wants to run (no shell):\n  ${formatArgv(args.argv)}\n` +
+        `Injecting as env vars: ${envDisplay}`;
       const key = requestKey("run_with_secret", args);
       if (!gate.checkApproval(key, message, timeoutMs)) {
         appendAudit({ tool: "run_with_secret", secret_ids: args.secret_ids, argv0, verified: false });

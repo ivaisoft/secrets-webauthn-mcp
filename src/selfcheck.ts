@@ -7,6 +7,7 @@ import { resolveEnvName } from "./envname.js";
 import { escapeHtml } from "./html.js";
 import { isAllowedRequest } from "./http-guard.js";
 import { requestKey } from "./request-key.js";
+import { formatArgv } from "./shell-format.js";
 import type { Allowlist } from "./schemas.js";
 
 function assert(condition: boolean, message: string): void {
@@ -105,6 +106,23 @@ export function runSelfcheck(): void {
     requestKey("http_request", argsA) !== requestKey("run_with_secret", argsA),
     "same args, different tool -> different request key",
   );
+
+  // 7. Argv display formatting: plain args stay bare, anything ambiguous is
+  // quoted so the boundaries a human reviews match the real argv boundaries
+  // (run_with_secret always execs argv directly — this is display only).
+  assert(
+    formatArgv(["node", "-e", "console.log(1)"]) === "node -e 'console.log(1)'",
+    "shell metacharacters get quoted",
+  );
+  assert(
+    formatArgv(["curl", "https://example.com/a b"]) === "curl 'https://example.com/a b'",
+    "an argument containing a space is quoted, not silently space-joined",
+  );
+  assert(
+    formatArgv(["echo", "it's here"]) === "echo 'it'\\''s here'",
+    "an embedded single quote is escaped correctly",
+  );
+  assert(formatArgv(["node", "-v"]) === "node -v", "plain args are left unquoted");
 
   process.stdout.write("selfcheck ok\n");
 }

@@ -55,7 +55,7 @@ export async function startGate(): Promise<Gate> {
   const approvePage = (key: string, message: string): string =>
     page(
       "Approve secret use",
-      `<p>${escapeHtml(message)}</p>
+      `<pre>${escapeHtml(message)}</pre>
 <button onclick="go()">Approve with Touch ID / passkey</button>
 <script>
 async function go(){
