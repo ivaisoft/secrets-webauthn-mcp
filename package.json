@@ -26,12 +26,12 @@
   },
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js",
     "serve": "node dist/index.js serve",
     "start": "node dist/index.js serve",
     "register": "tsx src/index.ts register",
     "selfcheck": "tsx src/index.ts selfcheck",
-    "test": "tsx test/list_secrets.test.ts && tsx test/http_request.test.ts && tsx test/run_with_secret.test.ts && tsx test/http_transport.test.ts"
+    "test": "tsx test/list_secrets.test.ts && tsx test/http_request.test.ts && tsx test/run_with_secret.test.ts && tsx test/http_transport.test.ts && tsx test/build-artifact.test.ts"
   },
   "dependencies": {
     "@bitwarden/sdk-napi": "^1.0.0",
