@@ -75,7 +75,9 @@ const fakeBws = {
     if (!s) throw new Error("no such secret " + id);
     return s;
   },
-  listSecrets: async () => [],
+  // Mirrors secretMap's key names — real listSecrets() never returns a value,
+  // so the fake doesn't either (id -> key only), matching the ADR 0005 contract.
+  listSecrets: async () => Object.entries(secretMap).map(([id, s]) => ({ id, key: s.key })),
 } as any;
 
 registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });
@@ -108,6 +110,26 @@ await test("first call (not yet approved) returns instructions + URL, never spaw
   assert.ok(!textOf(r).includes(SECRET));
   assert.equal(r.structuredContent.status, "approval_required");
   assert.equal(typeof r.structuredContent.approve_url, "string");
+});
+
+await test("formatting: the real Bitwarden key name is shown, and an ambiguous arg is quoted", async () => {
+  secretMap = { s1: { key: "MY_SECRET_KEY", value: SECRET } };
+  const args = { argv: ["printf", "%s", "hello world"], secret_ids: ["s1"] };
+  const r = await run(args);
+  assert.ok(textOf(r).includes("(MY_SECRET_KEY)"), "must show the real Bitwarden key name, not a placeholder");
+  assert.ok(
+    textOf(r).includes("printf %s 'hello world'"),
+    "an argument containing a space must be quoted, matching the real argv boundaries",
+  );
+  assert.ok(!textOf(r).includes("<its Bitwarden key name>"), "no placeholder once listSecrets resolves the name");
+});
+
+await test("formatting: a secret_id not found via list_secrets falls back honestly, not to a fake name", async () => {
+  secretMap = {}; // "s1" is unknown to listSecrets (and to getSecret — but approval never gets that far)
+  const args = { argv: ["echo", "hi"], secret_ids: ["s1"] };
+  const r = await run(args);
+  assert.ok(textOf(r).includes("(not found via list_secrets)"));
+  assert.ok(textOf(r).includes("<its Bitwarden key name>"));
 });
 
 await test("approval is single-use: repeating the same call again is not yet approved", async () => {

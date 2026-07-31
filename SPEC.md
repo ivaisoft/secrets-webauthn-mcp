@@ -49,7 +49,7 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 - Injects each secret as an **env var** into the child. Default env name = the secret's **Bitwarden key name**; `env_overrides` may set an explicit name per secret.
 - Never place a secret in `argv` (would show in `ps`/logs). Env only.
 - Returns child `stdout`+`stderr` and exit code.
-- No allowlist (command is arbitrary); the Gate prompt shows the full `argv` + injected env-var names + secret ids, and the human approves.
+- No allowlist (command is arbitrary); the Gate prompt shows `argv` (shell-quoted for display via `shell-format.ts` — display only, never actually run through a shell), each secret's real Bitwarden key name (resolved via the same ungated `listSecrets()` lookup `list_secrets` itself uses, ADR 0005 — never the value, safe pre-approval), and the injected env-var name, and the human approves.
 - `outputSchema` (ADR 0007): `{ status: "approval_required"|"ok"|"error", approve_url?, reason?, exit_code?, stdout?, stderr? }`.
 
 ## The Gate (WebAuthn via request-key re-check — ADR 0006)
