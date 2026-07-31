@@ -126,6 +126,10 @@ await test("first call (not yet approved) returns instructions + URL, never fetc
   assert.ok(textOf(r).includes(keyFor(args)), "must include this exact request's key in the URL");
   assert.equal(fetchCalls.length, 0, "must not fetch before approval");
   assert.ok(!textOf(r).includes(SECRET));
+  // structuredContent lets a client detect this programmatically, not just from prose.
+  assert.equal(r.structuredContent.status, "approval_required");
+  assert.equal(typeof r.structuredContent.approve_url, "string");
+  assert.ok((r.structuredContent.approve_url as string).includes(keyFor(args)));
 });
 
 await test("second, identical call after out-of-band approval: fetch happens, secret injected, value never returned", async () => {
@@ -139,6 +143,9 @@ await test("second, identical call after out-of-band approval: fetch happens, se
   assert.equal(fetchCalls[0]!.init.headers["Authorization"], `Bearer ${SECRET}`, "secret must be injected");
   assert.equal(fetchCalls[0]!.init.redirect, "manual", "must disable redirect following");
   assert.ok(!textOf(r).includes(SECRET), "secret value must never appear in the tool output");
+  assert.equal(r.structuredContent.status, "ok");
+  assert.equal(r.structuredContent.http_status, 200);
+  assert.equal(r.structuredContent.body, "RESPONSE_BODY");
 });
 
 await test("approval is single-use: a third call with the same args is not yet approved again", async () => {

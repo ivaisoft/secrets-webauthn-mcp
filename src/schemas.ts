@@ -145,3 +145,39 @@ export const RegistrationResponseSchema = z.object({
   type: z.literal("public-key"),
 });
 export type RegistrationResponse = z.infer<typeof RegistrationResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Tool structured output (ADR 0007)
+// ---------------------------------------------------------------------------
+
+/** Shared across both gated tools so a client can act on `status` without
+ *  parsing the human-readable `content` text: "approval_required" means open
+ *  `approve_url` and re-issue this exact call; "error" means see `reason`. */
+const ToolStatusFields = {
+  status: z.enum(["approval_required", "ok", "error"]),
+  approve_url: z
+    .string()
+    .optional()
+    .describe(
+      'Present when status is "approval_required". Open this URL, approve with WebAuthn ' +
+        "(Touch ID / passkey), then re-issue this exact tool call with the same arguments.",
+    ),
+  reason: z.string().optional().describe('Present when status is "error": why the call did not proceed.'),
+};
+
+export const HttpRequestOutputSchema = {
+  ...ToolStatusFields,
+  http_status: z.number().optional().describe('Present when status is "ok": the HTTP response status code.'),
+  body: z.string().optional().describe('Present when status is "ok": the HTTP response body.'),
+};
+
+export const RunWithSecretOutputSchema = {
+  ...ToolStatusFields,
+  exit_code: z
+    .number()
+    .nullable()
+    .optional()
+    .describe('Present when status is "ok": the spawned command\'s exit code.'),
+  stdout: z.string().optional().describe('Present when status is "ok": the spawned command\'s stdout.'),
+  stderr: z.string().optional().describe('Present when status is "ok": the spawned command\'s stderr.'),
+};

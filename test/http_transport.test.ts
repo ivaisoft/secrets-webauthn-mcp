@@ -117,6 +117,10 @@ await test("tool call over HTTP: not-yet-approved first, then proceeds after out
     const firstText = (first.content as { type: string; text: string }[])[0]!.text;
     assert.equal(first.isError, true, "must not proceed before approval — this works with ANY MCP client");
     assert.match(firstText, /physical approval required/i);
+    // The declared outputSchema is enforced by the real SDK over the real wire —
+    // this is the one test that would fail if structuredContent didn't match it.
+    assert.equal(first.structuredContent?.status, "approval_required");
+    assert.equal(typeof first.structuredContent?.approve_url, "string");
 
     // Simulate a human having approved this exact request out of band.
     approvedKeys.add(requestKey("http_request", HttpRequestArgsSchema.parse(callArgs)));
@@ -126,6 +130,8 @@ await test("tool call over HTTP: not-yet-approved first, then proceeds after out
     assert.equal(sawAuthHeader, `Bearer ${SECRET}`);
     const secondText = (second.content as { type: string; text: string }[])[0]!.text;
     assert.ok(!secondText.includes(SECRET), "the secret must never appear in the tool result");
+    assert.equal(second.structuredContent?.status, "ok");
+    assert.equal(second.structuredContent?.http_status, 200);
   } finally {
     globalThis.fetch = originalFetch;
   }

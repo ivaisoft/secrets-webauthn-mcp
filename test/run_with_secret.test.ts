@@ -106,6 +106,8 @@ await test("first call (not yet approved) returns instructions + URL, never spaw
   assert.ok(textOf(r).includes(keyFor(args)));
   assert.equal(events.includes("getSecret:s1"), false, "must not fetch the secret before approval");
   assert.ok(!textOf(r).includes(SECRET));
+  assert.equal(r.structuredContent.status, "approval_required");
+  assert.equal(typeof r.structuredContent.approve_url, "string");
 });
 
 await test("approval is single-use: repeating the same call again is not yet approved", async () => {
@@ -126,6 +128,8 @@ await test("after approval: inject under the Bitwarden key name; child receives 
   assert.match(textOf(r), /\[exit 0\]/);
   assert.ok(textOf(r).includes(SECRET), "child must receive the secret under its key name");
   assert.deepEqual(events, ["checkApproval", "getSecret:s1"], "Approval check must precede the secret fetch/spawn");
+  assert.equal(r.structuredContent.status, "ok");
+  assert.equal(r.structuredContent.exit_code, 0);
 });
 
 await test("env_overrides renames the var; default name is unset", async () => {

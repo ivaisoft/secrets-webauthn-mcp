@@ -40,6 +40,7 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 - **Allowlist:** local `allowlist.json` maps each `secret_id -> [allowed hosts]`. Reject **before** any touch if `new URL(url).host` is not in the allowed hosts of **every** requested secret.
 - Injects secret(s) into the request **header** (`header: scheme+value`). For multiple secrets, header/scheme are per-secret (allow an array form).
 - Returns `HTTP <status>\n\n<body>` only.
+- `outputSchema` (ADR 0007): `{ status: "approval_required"|"ok"|"error", approve_url?, reason?, http_status?, body? }`.
 
 ### `run_with_secret` — flexible escape hatch (command review)
 
@@ -49,6 +50,7 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 - Never place a secret in `argv` (would show in `ps`/logs). Env only.
 - Returns child `stdout`+`stderr` and exit code.
 - No allowlist (command is arbitrary); the Gate prompt shows the full `argv` + injected env-var names + secret ids, and the human approves.
+- `outputSchema` (ADR 0007): `{ status: "approval_required"|"ok"|"error", approve_url?, reason?, exit_code?, stdout?, stderr? }`.
 
 ## The Gate (WebAuthn via request-key re-check — ADR 0006)
 
