@@ -43,15 +43,16 @@ export async function runRegister(): Promise<void> {
 
   const registerPage = page(
     hasCredentials ? "Add another authenticator" : "Register this authenticator",
-    `<p>${escapeHtml(
+    `<p class="lede">${escapeHtml(
       hasCredentials
         ? "An existing authenticator must Approve before a new one can be added."
         : "Bind an authenticator so it can Approve secret use.",
     )}</p>
-<button onclick="run('platform')">${hasCredentials ? "Approve, then register this Mac (Touch ID)" : "Register this Mac (Touch ID)"}</button>
-<button onclick="run('cross-platform')">${hasCredentials ? "Approve, then register a phone / security key" : "Register a phone / security key"}</button>
-<p style="font-size:.85em;color:#666">Picking a kind matters: without it, some browsers save a
-password-protected iCloud Keychain passkey instead of a true Touch ID credential.</p>
+<div style="display:flex;flex-direction:column;gap:10px">
+<button class="btn btn-primary" onclick="run('platform')">${hasCredentials ? "Approve, then register this Mac (Touch ID)" : "Register this Mac (Touch ID)"}</button>
+<button class="btn btn-secondary" onclick="run('cross-platform')">${hasCredentials ? "Approve, then register a phone / security key" : "Register a phone / security key"}</button>
+</div>
+<p class="hint">Picking a kind matters: without it, some browsers save a password-protected iCloud Keychain passkey instead of a true Touch ID credential.</p>
 <script>
 var HAS_CREDS = ${hasCredentials ? "true" : "false"};
 async function run(attachment){

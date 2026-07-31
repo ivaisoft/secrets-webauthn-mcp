@@ -17,7 +17,8 @@ import {
   type PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/server";
 import { loadCredentials, saveCredentials, toWebAuthnCredential } from "./credentials.js";
-import { escapeHtml, page } from "./html.js";
+import { highlightMessage } from "./highlight.js";
+import { page } from "./html.js";
 import { BROWSER_BUNDLE, readJsonBody, send, sendJson } from "./http-util.js";
 import { AuthenticationResponseSchema } from "./schemas.js";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
@@ -52,23 +53,30 @@ export async function startGate(): Promise<Gate> {
     }
   }
 
-  const approvePage = (key: string, message: string): string =>
-    page(
+  const approvePage = (key: string, message: string, expiresAt: number): string => {
+    const minutesLeft = Math.max(1, Math.round((expiresAt - Date.now()) / 60000));
+    return page(
       "Approve secret use",
-      `<pre>${escapeHtml(message)}</pre>
-<button onclick="go()">Approve with Touch ID / passkey</button>
+      `<p class="lede">A tool call is waiting for your physical approval. No secret value is ever shown here.</p>
+<pre class="code">${highlightMessage(message)}</pre>
+<p class="hint">Valid for ~${minutesLeft} more minute${minutesLeft === 1 ? "" : "s"} — expires automatically if not approved.</p>
+<button id="approveBtn" class="btn btn-primary" onclick="go()">Approve with Touch ID / passkey</button>
 <script>
 async function go(){
   var s=document.getElementById('status');
+  var btn=document.getElementById('approveBtn');
+  btn.disabled=true; btn.textContent='Waiting for Touch ID / passkey…';
   try{
     var o=await fetch('/approve/options?rid=${encodeURIComponent(key)}').then(r=>r.json());
     var a=await SimpleWebAuthnBrowser.startAuthentication({optionsJSON:o});
     var r=await fetch('/approve/verify?rid=${encodeURIComponent(key)}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json());
     s.textContent = r.verified ? '\\u2705 Approved. Go back and re-run the exact same command.' : '\\u274c '+(r.error||'not verified');
   }catch(e){ s.textContent='\\u274c '+e; }
+  finally { btn.disabled=false; btn.textContent='Approve with Touch ID / passkey'; }
 }
 </script>`,
     );
+  };
 
   const httpServer: HttpServer = createServer(async (req, res) => {
     try {
@@ -90,9 +98,12 @@ async function go(){
             res,
             404,
             "text/html",
-            page("Expired", "This approval link is no longer valid. Re-run the tool call to get a fresh one."),
+            page(
+              "Expired",
+              `<p class="lede">This approval link is no longer valid. Re-run the tool call to get a fresh one.</p>`,
+            ),
           );
-        return send(res, 200, "text/html", approvePage(key, entry.message));
+        return send(res, 200, "text/html", approvePage(key, entry.message, entry.expiresAt));
       }
 
       if (path === "/approve/options") {
