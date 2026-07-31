@@ -8,6 +8,7 @@ import { checkHostAllowed, loadAllowlist } from "./allowlist.js";
 import type { BwsGateway, SecretHandle } from "./bws.js";
 import { resolveEnvName } from "./envname.js";
 import type { Gate } from "./gate.js";
+import { requestKey } from "./request-key.js";
 import {
   EnvNameSchema,
   HttpRequestArgsSchema,
@@ -58,7 +59,6 @@ function resolveSchemes(scheme: string | string[], count: number): string[] {
 
 export function registerTools(ctx: ToolContext): void {
   const { mcp, gate, bws, timeoutMs } = ctx;
-  const mcpLow = mcp.server;
 
   mcp.registerTool(
     "list_secrets",
@@ -119,7 +119,15 @@ export function registerTools(ctx: ToolContext): void {
       const message =
         `http_request wants to use secret(s) [${args.secret_ids.join(", ")}] ` +
         `to call host "${host}" (${args.method} ${args.url}).`;
-      await gate.requireApproval(mcpLow, message, timeoutMs);
+      const key = requestKey("http_request", args);
+      if (!gate.checkApproval(key, message, timeoutMs)) {
+        appendAudit({ tool: "http_request", secret_ids: args.secret_ids, host, verified: false });
+        return fail(
+          `Physical approval required.\n\n${message}\n\n` +
+            `Open this URL and approve with Touch ID / passkey, then re-run this exact tool call:\n` +
+            `${gate.origin}/approve?rid=${key}`,
+        );
+      }
 
       const handles = await Promise.all(args.secret_ids.map((id) => bws.getSecret(id)));
       const headers: Record<string, string> = {};
@@ -176,7 +184,15 @@ export function registerTools(ctx: ToolContext): void {
       const message =
         `run_with_secret wants to inject secret(s) as env vars [${envDisplay}] ` +
         `and run (no shell): ${args.argv.join(" ")}`;
-      await gate.requireApproval(mcpLow, message, timeoutMs);
+      const key = requestKey("run_with_secret", args);
+      if (!gate.checkApproval(key, message, timeoutMs)) {
+        appendAudit({ tool: "run_with_secret", secret_ids: args.secret_ids, argv0, verified: false });
+        return fail(
+          `Physical approval required.\n\n${message}\n\n` +
+            `Open this URL and approve with Touch ID / passkey, then re-run this exact tool call:\n` +
+            `${gate.origin}/approve?rid=${key}`,
+        );
+      }
 
       const handles: SecretHandle[] = await Promise.all(
         args.secret_ids.map((id) => bws.getSecret(id)),

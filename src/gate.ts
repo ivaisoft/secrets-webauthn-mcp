@@ -1,9 +1,16 @@
-// The Gate: URL-mode elicitation + a localhost WebAuthn approval page. A tool
-// proceeds only when the pending entry is WebAuthn-verified AND the elicitation
-// action is not decline/cancel. No approval is ever cached — one touch per use.
-import { randomUUID } from "node:crypto";
+// The Gate: a deterministic per-request key (request-key.ts) plus a localhost
+// WebAuthn approval page. A tool proceeds only when the pending entry for its
+// exact request-key has been verified — checkApproval both checks AND (on
+// success) consumes the entry, so one physical approval authorizes exactly
+// one execution of exactly one request, never more.
+//
+// This does NOT use MCP elicitation (see ADR 0006): not every MCP client
+// implements it, and a security mechanism that silently does nothing in
+// unsupporting clients isn't a mechanism, it's a bug. Instead, a tool call
+// that isn't yet approved returns plain instructional text — which works with
+// ANY MCP client — telling the human to open a URL and then re-issue the
+// identical call; that second call finds its request-key already verified.
 import { createServer, type Server as HttpServer } from "node:http";
-import type { Server as McpLowServer } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
@@ -17,27 +24,35 @@ import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 
 const RP_ID = "localhost";
 
-interface PendingApproval {
-  challenge: string;
-  options: PublicKeyCredentialRequestOptionsJSON;
+interface PendingRequest {
   message: string;
   verified: boolean;
-  onVerified?: () => void;
+  expiresAt: number;
+  challenge?: string;
 }
 
 export interface Gate {
   origin: string;
   port: number;
-  /** Block until a fresh physical Approval is obtained, or throw. */
-  requireApproval(mcpLow: McpLowServer, message: string, timeoutMs: number): Promise<void>;
+  /** True (and consumes the entry — single use) if `key` was already approved
+   *  via the /approve page; otherwise (re)registers `message` as pending for
+   *  `key`, valid for `ttlMs`, and returns false. */
+  checkApproval(key: string, message: string, ttlMs: number): boolean;
   close(): void;
 }
 
 export async function startGate(): Promise<Gate> {
-  const pending = new Map<string, PendingApproval>();
+  const pending = new Map<string, PendingRequest>();
   let origin = "";
 
-  const approvePage = (rid: string, message: string): string =>
+  function sweepExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of pending) {
+      if (!entry.verified && entry.expiresAt < now) pending.delete(key);
+    }
+  }
+
+  const approvePage = (key: string, message: string): string =>
     page(
       "Approve secret use",
       `<p>${escapeHtml(message)}</p>
@@ -46,10 +61,10 @@ export async function startGate(): Promise<Gate> {
 async function go(){
   var s=document.getElementById('status');
   try{
-    var o=await fetch('/approve/options?rid=${encodeURIComponent(rid)}').then(r=>r.json());
+    var o=await fetch('/approve/options?rid=${encodeURIComponent(key)}').then(r=>r.json());
     var a=await SimpleWebAuthnBrowser.startAuthentication({optionsJSON:o});
-    var r=await fetch('/approve/verify?rid=${encodeURIComponent(rid)}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json());
-    s.textContent = r.verified ? '\\u2705 Approved. Return to your agent.' : '\\u274c '+(r.error||'not verified');
+    var r=await fetch('/approve/verify?rid=${encodeURIComponent(key)}',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(a)}).then(r=>r.json());
+    s.textContent = r.verified ? '\\u2705 Approved. Go back and re-run the exact same command.' : '\\u274c '+(r.error||'not verified');
   }catch(e){ s.textContent='\\u274c '+e; }
 }
 </script>`,
@@ -67,23 +82,37 @@ async function go(){
       if (path.startsWith("/register")) return send(res, 404, "text/plain", "not found");
 
       if (path === "/approve") {
-        const rid = url.searchParams.get("rid") ?? "";
-        const entry = pending.get(rid);
+        sweepExpired();
+        const key = url.searchParams.get("rid") ?? "";
+        const entry = pending.get(key);
         if (!entry)
-          return send(res, 404, "text/html", page("Expired", "This approval link is no longer valid."));
-        return send(res, 200, "text/html", approvePage(rid, entry.message));
+          return send(
+            res,
+            404,
+            "text/html",
+            page("Expired", "This approval link is no longer valid. Re-run the tool call to get a fresh one."),
+          );
+        return send(res, 200, "text/html", approvePage(key, entry.message));
       }
 
       if (path === "/approve/options") {
         const entry = pending.get(url.searchParams.get("rid") ?? "");
-        if (!entry) return sendJson(res, 404, { error: "unknown rid" });
-        return sendJson(res, 200, entry.options);
+        if (!entry) return sendJson(res, 404, { error: "unknown or expired request" });
+        const credentials = loadCredentials();
+        if (credentials.length === 0) return sendJson(res, 400, { error: "no credential registered" });
+        const options: PublicKeyCredentialRequestOptionsJSON = await generateAuthenticationOptions({
+          rpID: RP_ID,
+          userVerification: "required",
+          allowCredentials: credentials.map((c) => toWebAuthnCredential(c)),
+        });
+        entry.challenge = options.challenge;
+        return sendJson(res, 200, options);
       }
 
       if (path === "/approve/verify" && req.method === "POST") {
-        const rid = url.searchParams.get("rid") ?? "";
-        const entry = pending.get(rid);
-        if (!entry) return sendJson(res, 404, { error: "unknown rid" });
+        const key = url.searchParams.get("rid") ?? "";
+        const entry = pending.get(key);
+        if (!entry || !entry.challenge) return sendJson(res, 404, { error: "unknown or expired request" });
 
         const parsed = AuthenticationResponseSchema.safeParse(await readJsonBody(req));
         if (!parsed.success) return sendJson(res, 400, { error: "malformed assertion" });
@@ -107,7 +136,6 @@ async function go(){
         credentials[idx] = { ...stored, counter: verification.authenticationInfo.newCounter };
         saveCredentials(credentials);
         entry.verified = true;
-        entry.onVerified?.();
         return sendJson(res, 200, { verified: true });
       }
 
@@ -126,57 +154,21 @@ async function go(){
   });
   origin = `http://localhost:${port}`;
 
-  async function requireApproval(
-    mcpLow: McpLowServer,
-    message: string,
-    timeoutMs: number,
-  ): Promise<void> {
-    const credentials = loadCredentials();
-    if (credentials.length === 0) {
-      throw new Error("No credential registered. Run `npm run register` first.");
+  function checkApproval(key: string, message: string, ttlMs: number): boolean {
+    sweepExpired();
+    const existing = pending.get(key);
+    if (existing?.verified) {
+      pending.delete(key); // single-use: consumed the moment a tool proceeds on it
+      return true;
     }
-
-    const options = await generateAuthenticationOptions({
-      rpID: RP_ID,
-      userVerification: "required",
-      allowCredentials: credentials.map((c) => toWebAuthnCredential(c)),
-    });
-
-    const rid = randomUUID();
-    const entry: PendingApproval = {
-      challenge: options.challenge,
-      options,
-      message,
-      verified: false,
-    };
-    pending.set(rid, entry);
-
-    // Auto-close the client dialog the moment WebAuthn verifies.
-    const notify = mcpLow.createElicitationCompletionNotifier(rid);
-    entry.onVerified = () => {
-      void notify().catch(() => {});
-    };
-
-    try {
-      const result = await mcpLow.elicitInput(
-        { mode: "url", message, elicitationId: rid, url: `${origin}/approve?rid=${rid}` },
-        { timeout: timeoutMs },
-      );
-      if (result.action === "decline" || result.action === "cancel") {
-        throw new Error("Approval was declined at the Gate.");
-      }
-      if (!entry.verified) {
-        throw new Error("No verified WebAuthn Approval — refusing to use the secret.");
-      }
-    } finally {
-      pending.delete(rid);
-    }
+    pending.set(key, { message, verified: false, expiresAt: Date.now() + ttlMs });
+    return false;
   }
 
   return {
     origin,
     port,
-    requireApproval,
+    checkApproval,
     close: () => httpServer.close(),
   };
 }

@@ -6,6 +6,7 @@ import { base64ToPublicKey, publicKeyToBase64 } from "./credentials.js";
 import { resolveEnvName } from "./envname.js";
 import { escapeHtml } from "./html.js";
 import { isAllowedRequest } from "./http-guard.js";
+import { requestKey } from "./request-key.js";
 import type { Allowlist } from "./schemas.js";
 
 function assert(condition: boolean, message: string): void {
@@ -87,6 +88,23 @@ export function runSelfcheck(): void {
     "deny: unrecognized Host even with no Origin",
   );
   assert(isAllowedRequest(undefined, undefined, ports) === false, "deny: missing Host header");
+
+  // 6. Request-key determinism (the Gate's re-check-without-elicitation mechanism).
+  const argsA = { secret_ids: ["s1"], url: "https://api.example.com/x", method: "GET" };
+  const argsAReordered = { method: "GET", url: "https://api.example.com/x", secret_ids: ["s1"] };
+  const argsB = { secret_ids: ["s1"], url: "https://api.example.com/y", method: "GET" };
+  assert(
+    requestKey("http_request", argsA) === requestKey("http_request", argsAReordered),
+    "same args, different key order -> same request key",
+  );
+  assert(
+    requestKey("http_request", argsA) !== requestKey("http_request", argsB),
+    "different args -> different request key",
+  );
+  assert(
+    requestKey("http_request", argsA) !== requestKey("run_with_secret", argsA),
+    "same args, different tool -> different request key",
+  );
 
   process.stdout.write("selfcheck ok\n");
 }

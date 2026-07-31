@@ -3,6 +3,17 @@
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
+
+/** Which kind of authenticator to register. Defaults to "platform" (this Mac's
+ *  Touch ID / Secure Enclave) rather than leaving it unconstrained: without an
+ *  explicit attachment, the browser's chooser can create an iCloud-Keychain-
+ *  synced passkey instead, which prompts for the account password to unlock
+ *  rather than Touch ID. "cross-platform" registers a phone/security key. */
+export const AuthenticatorAttachmentSchema = z.enum(["platform", "cross-platform"]).default("platform");
+
+// ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
 
