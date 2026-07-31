@@ -46,7 +46,7 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 
 - Args: `{ argv: [bin, ...args], secret_ids: [...], env_overrides?: { secret_id: ENV_NAME } }`
 - **No shell.** Spawn `argv[0]` with `argv[1..]` verbatim (exec, not shell). What the human reads at the Gate is exactly what runs.
-- Injects each secret as an **env var** into the child. Default env name = the secret's **Bitwarden key name**; `env_overrides` may set an explicit name per secret.
+- Injects each secret as an **env var** into the child. Default env name = the secret's **Bitwarden key name**; `env_overrides` may set an explicit name per secret. Every `env_overrides` key must be one of `secret_ids` — rejected **before** Approval otherwise (a typo'd id would silently no-op, invisible in the Approval message).
 - Never place a secret in `argv` (would show in `ps`/logs). Env only.
 - Returns child `stdout`+`stderr` and exit code.
 - No allowlist (command is arbitrary); the Gate prompt shows `argv` (shell-quoted for display via `shell-format.ts` — display only, never actually run through a shell), each secret's real Bitwarden key name (resolved via the same ungated `listSecrets()` lookup `list_secrets` itself uses, ADR 0005 — never the value, safe pre-approval), and the injected env-var name, and the human approves.

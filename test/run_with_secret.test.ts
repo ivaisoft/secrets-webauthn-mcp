@@ -179,6 +179,16 @@ await test("secret is never in argv, and not leaked when the child is quiet", as
   assert.ok(!textOf(r).includes(SECRET), "secret must never appear in argv nor be leaked by the wrapper");
 });
 
+await test("env_overrides referencing an unknown secret_id is rejected before Approval", async () => {
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  const args = { argv: echo("'x'"), secret_ids: ["s1"], env_overrides: { "typo-id": "SOME_NAME" } };
+  const r = await run(args); // no preApprove — must fail before even checking approval
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /env_overrides/i);
+  assert.match(textOf(r), /typo-id/);
+  assert.equal(events.includes("checkApproval"), false, "must reject before requesting Approval — a typo'd override is a caller bug, not something to spend a touch confirming");
+});
+
 await test("duplicate resolved env var name is refused", async () => {
   secretMap = { a: { key: "SAME", value: "v1" }, b: { key: "SAME", value: "v2" } };
   const r = await runApproved({ argv: echo("'x'"), secret_ids: ["a", "b"] });

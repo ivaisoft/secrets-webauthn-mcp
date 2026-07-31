@@ -215,6 +215,19 @@ export function registerTools(ctx: ToolContext): void {
     },
     async (args: RunWithSecretArgs): Promise<ToolResult> => {
       const argv0 = args.argv[0]!;
+      // env_overrides is validated by zod as Record<string, EnvNameSchema> alone —
+      // zod can't cross-check its keys against the sibling secret_ids array. Without
+      // this, a typo'd key is silently a no-op: not shown in the Approval message,
+      // not applied, no error. Caught here, before Approval, since it's a caller
+      // bug, not something worth spending a physical touch to discover.
+      if (args.env_overrides) {
+        const unknownIds = Object.keys(args.env_overrides).filter((id) => !args.secret_ids.includes(id));
+        if (unknownIds.length > 0) {
+          return errorResult(
+            `env_overrides references secret_id(s) not in secret_ids: ${unknownIds.join(", ")}`,
+          );
+        }
+      }
       // Show the human EXACTLY what each secret is injected as, including its real
       // Bitwarden name — via listSecrets(), the SAME ungated {id,key} lookup
       // list_secrets itself uses (ADR 0005). This never fetches a value, so it's
