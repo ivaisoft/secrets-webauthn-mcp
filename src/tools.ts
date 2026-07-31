@@ -1,6 +1,9 @@
-// The two tools. Both require a fresh Approval (no cache). Secret values are
-// fetched only AFTER a verified Approval, injected into a header or a child env,
-// and never returned to the agent, placed in argv, or written to any log.
+// The two gated tools. Both require a fresh Approval (no cache). Secret values
+// are fetched only AFTER a verified Approval, injected into a header or a
+// child env, and never returned to the agent, placed in argv, or written to
+// any log. Both declare an outputSchema (ADR 0007) so a client can detect
+// `structuredContent.status === "approval_required"` and act on `approve_url`
+// programmatically, instead of only having free text to parse.
 import { spawn } from "node:child_process";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { appendAudit } from "./audit.js";
@@ -12,7 +15,9 @@ import { requestKey } from "./request-key.js";
 import {
   EnvNameSchema,
   HttpRequestArgsSchema,
+  HttpRequestOutputSchema,
   RunWithSecretArgsSchema,
+  RunWithSecretOutputSchema,
   type HttpRequestArgs,
   type RunWithSecretArgs,
 } from "./schemas.js";
@@ -26,11 +31,50 @@ interface ToolContext {
 
 type ToolResult = {
   content: { type: "text"; text: string }[];
+  structuredContent: Record<string, unknown>;
   isError?: boolean;
 };
 
-const ok = (text: string): ToolResult => ({ content: [{ type: "text", text }] });
-const fail = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
+/** The prose is identical for both tools; only `message` (what will happen)
+ *  and `url` (this exact request's Approval link) differ per call. */
+function approvalRequired(message: string, url: string): ToolResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `Physical approval required.\n\n${message}\n\n` +
+          `Open this URL and approve with Touch ID / passkey, then re-run this exact tool call:\n${url}`,
+      },
+    ],
+    structuredContent: { status: "approval_required", approve_url: url },
+    isError: true,
+  };
+}
+
+function errorResult(reason: string): ToolResult {
+  return {
+    content: [{ type: "text", text: reason }],
+    structuredContent: { status: "error", reason },
+    isError: true,
+  };
+}
+
+function httpOk(httpStatus: number, body: string): ToolResult {
+  return {
+    content: [{ type: "text", text: `HTTP ${httpStatus}\n\n${body}` }],
+    structuredContent: { status: "ok", http_status: httpStatus, body },
+  };
+}
+
+function runOk(exitCode: number | null, stdout: string, stderr: string): ToolResult {
+  return {
+    content: [
+      { type: "text", text: `[exit ${exitCode ?? "null"}]\n\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}` },
+    ],
+    structuredContent: { status: "ok", exit_code: exitCode, stdout, stderr },
+  };
+}
 
 /** Header names must be unambiguous: one string only when there is exactly one secret. */
 function resolveHeaderNames(header: string | string[], count: number): string[] {
@@ -71,14 +115,14 @@ export function registerTools(ctx: ToolContext): void {
         "run_with_secret.",
       inputSchema: {},
     },
-    async (): Promise<ToolResult> => {
+    async () => {
       const secrets = await bws.listSecrets();
       // Explicit map, not a bare stringify of whatever BwsGateway.listSecrets()
       // returns: this tool's contract is {id, key} only, enforced here too — not
       // just trusted from the interface — so a future implementation that adds
       // fields (or a bug in one) can't silently widen what this tool exposes.
       const safe = secrets.map((s) => ({ id: s.id, key: s.key }));
-      return ok(JSON.stringify(safe, null, 2));
+      return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
     },
   );
 
@@ -91,20 +135,21 @@ export function registerTools(ctx: ToolContext): void {
         "The secret value is never revealed — only the response is returned. Each requested secret's " +
         "target host must be in its allowlist, and every call requires a fresh physical WebAuthn Approval.",
       inputSchema: HttpRequestArgsSchema,
+      outputSchema: HttpRequestOutputSchema,
     },
     async (args: HttpRequestArgs): Promise<ToolResult> => {
       let host: string;
       try {
         host = new URL(args.url).host;
       } catch {
-        return fail("invalid url");
+        return errorResult("invalid url");
       }
 
       // Allowlist is enforced BEFORE any secret is touched.
       const check = checkHostAllowed(loadAllowlist(), args.secret_ids, host);
       if (!check.ok) {
         appendAudit({ tool: "http_request", secret_ids: args.secret_ids, host, verified: false });
-        return fail(`Blocked by allowlist: ${check.reason}`);
+        return errorResult(`Blocked by allowlist: ${check.reason}`);
       }
 
       let headerNames: string[];
@@ -113,7 +158,7 @@ export function registerTools(ctx: ToolContext): void {
         headerNames = resolveHeaderNames(args.header, args.secret_ids.length);
         schemes = resolveSchemes(args.scheme, args.secret_ids.length);
       } catch (e) {
-        return fail(e instanceof Error ? e.message : String(e));
+        return errorResult(e instanceof Error ? e.message : String(e));
       }
 
       const message =
@@ -122,11 +167,7 @@ export function registerTools(ctx: ToolContext): void {
       const key = requestKey("http_request", args);
       if (!gate.checkApproval(key, message, timeoutMs)) {
         appendAudit({ tool: "http_request", secret_ids: args.secret_ids, host, verified: false });
-        return fail(
-          `Physical approval required.\n\n${message}\n\n` +
-            `Open this URL and approve with Touch ID / passkey, then re-run this exact tool call:\n` +
-            `${gate.origin}/approve?rid=${key}`,
-        );
+        return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);
       }
 
       const handles = await Promise.all(args.secret_ids.map((id) => bws.getSecret(id)));
@@ -147,7 +188,7 @@ export function registerTools(ctx: ToolContext): void {
       });
       if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
         appendAudit({ tool: "http_request", secret_ids: args.secret_ids, host, verified: true });
-        return fail(
+        return errorResult(
           `Refusing to follow a redirect from ${host}: following it could forward the ` +
             `injected secret to a host outside the allowlist. Re-issue http_request against ` +
             `the final URL if that host is allowlisted for these secrets.`,
@@ -155,7 +196,7 @@ export function registerTools(ctx: ToolContext): void {
       }
       const text = await response.text();
       appendAudit({ tool: "http_request", secret_ids: args.secret_ids, host, verified: true });
-      return ok(`HTTP ${response.status}\n\n${text}`);
+      return httpOk(response.status, text);
     },
   );
 
@@ -169,6 +210,7 @@ export function registerTools(ctx: ToolContext): void {
         "secret with env_overrides. The secret never appears in argv or logs. Returns the child's " +
         "stdout, stderr, and exit code. Every run requires a fresh physical WebAuthn Approval.",
       inputSchema: RunWithSecretArgsSchema,
+      outputSchema: RunWithSecretOutputSchema,
     },
     async (args: RunWithSecretArgs): Promise<ToolResult> => {
       const argv0 = args.argv[0]!;
@@ -187,11 +229,7 @@ export function registerTools(ctx: ToolContext): void {
       const key = requestKey("run_with_secret", args);
       if (!gate.checkApproval(key, message, timeoutMs)) {
         appendAudit({ tool: "run_with_secret", secret_ids: args.secret_ids, argv0, verified: false });
-        return fail(
-          `Physical approval required.\n\n${message}\n\n` +
-            `Open this URL and approve with Touch ID / passkey, then re-run this exact tool call:\n` +
-            `${gate.origin}/approve?rid=${key}`,
-        );
+        return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);
       }
 
       const handles: SecretHandle[] = await Promise.all(
@@ -213,12 +251,12 @@ export function registerTools(ctx: ToolContext): void {
           overrides: args.env_overrides,
         });
         if (!EnvNameSchema.safeParse(envName).success) {
-          return fail(
+          return errorResult(
             `env var name "${envName}" for secret ${secretId} is invalid; pass env_overrides to set a valid name`,
           );
         }
         if (used.has(envName)) {
-          return fail(`two secrets resolve to the same env var name "${envName}"`);
+          return errorResult(`two secrets resolve to the same env var name "${envName}"`);
         }
         used.add(envName);
         childEnv[envName] = handles[i]!.value;
@@ -241,7 +279,7 @@ export function registerTools(ctx: ToolContext): void {
       });
 
       appendAudit({ tool: "run_with_secret", secret_ids: args.secret_ids, argv0, verified: true });
-      return ok(`[exit ${result.code ?? "null"}]\n\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`);
+      return runOk(result.code, result.stdout, result.stderr);
     },
   );
 }

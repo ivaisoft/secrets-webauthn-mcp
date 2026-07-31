@@ -2,13 +2,19 @@
 
 MCP server for **Bitwarden Secrets Manager** that lets an agent **use** a secret
 without ever seeing its value. Every use is authorized by a fresh **physical
-WebAuthn Approval** (Touch ID / passkey) via MCP **URL-mode elicitation**.
+WebAuthn Approval** (Touch ID / passkey) — via a mechanism that works with
+**any** MCP client, not just ones that support elicitation (see
+[ADR 0006](./docs/adr/0006-request-key-approval-replaces-elicitation.md)):
 
 ```
-tool call → URL-mode elicitation → browser opens http://localhost:<auto-port>/approve
-          → SimpleWebAuthnBrowser.startAuthentication() (Touch ID / passkey)
-          → server verifies → secret fetched → injected into request/child → response returned
+1st call  → not yet approved → returns instructions + an Approval URL (plain tool text, works everywhere)
+          → open the URL, approve with Touch ID / passkey → server verifies
+2nd call  → identical arguments → finds the Approval, consumes it (single-use) → proceeds
 ```
+
+A client that understands `structuredContent` (ADR 0007) can detect
+`status === "approval_required"` and read `approve_url` directly, instead of
+parsing the prose.
 
 The `BWS_ACCESS_TOKEN` lives **only** inside this server process; the agent has no
 `bws` and no token. These two tools are the **sole** path to any secret, and the
@@ -27,9 +33,14 @@ secret value. `list_secrets` is the exception — see below.
 |---|---|
 | `list_secrets()` | Lists every `{ id, key }` in the configured organization — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). Use the returned `id` with the other two tools. |
 | `http_request({ url, method?, secret_ids, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
-| `run_with_secret({ argv, secret_ids, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the secret's Bitwarden key name; override per secret with `env_overrides`). Returns the child's stdout, stderr, and exit code. No allowlist — the Gate prompt shows the full `argv`, the injected env-var names, and the secret ids, and the human approves. |
+| `run_with_secret({ argv, secret_ids, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the secret's Bitwarden key name; override per secret with `env_overrides`). Returns the child's stdout, stderr, and exit code. No allowlist — the Approval prompt shows the full `argv`, the injected env-var names, and the secret ids, and the human approves. |
 
 Reference secrets by **UUID** (get one from `list_secrets`).
+
+`http_request`/`run_with_secret` also return `structuredContent` matching a
+declared `outputSchema`: `{ status: "approval_required" | "ok" | "error", approve_url?, reason?, ... }`
+(plus `http_status`/`body` for `http_request`, `exit_code`/`stdout`/`stderr` for
+`run_with_secret`) — see [ADR 0007](./docs/adr/0007-structured-output-for-approval-required.md).
 
 ## Requirements
 
