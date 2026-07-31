@@ -21,6 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # OIDC trusted publishing (no stored NPM_TOKEN needed) requires npm >= 11.5.1;
+      # the version bundled with setup-node's Node 22 may be older.
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run build
