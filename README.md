@@ -174,3 +174,7 @@ touches a specific secret's value, so there's no "use" to record.
 ```bash
 npm run selfcheck   # pure-logic checks (no vault access, no browser)
 ```
+
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for planned/considered future work.

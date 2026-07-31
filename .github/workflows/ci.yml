@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    # macos: @bitwarden/sdk-napi ships a prebuilt darwin-arm64 native binding;
+    # this matches the platform it's verified against (see docs/adr/0003).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+      - run: npm run selfcheck
+      - run: npm test
