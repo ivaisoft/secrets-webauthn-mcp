@@ -1,10 +1,15 @@
 {
-  "name": "bws-webauthn-mcp",
-  "version": "2.0.0",
+  "name": "@ivaisoft/bws-webauthn-mcp",
+  "version": "2.1.0",
   "type": "module",
   "description": "MCP server for Bitwarden Secrets Manager: the agent USES secrets it never sees, and every use is gated by a fresh physical WebAuthn Approval (Touch ID / passkey).",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/ivaisoft/bws-webauthn-mcp.git" },
+  "homepage": "https://github.com/ivaisoft/bws-webauthn-mcp#readme",
+  "bugs": { "url": "https://github.com/ivaisoft/bws-webauthn-mcp/issues" },
   "bin": { "bws-webauthn-mcp": "dist/index.js" },
   "files": ["dist", "README.md", "SPEC.md", "CONTEXT.md"],
+  "publishConfig": { "access": "public" },
   "scripts": {
     "build": "tsc",
     "serve": "node dist/index.js serve",

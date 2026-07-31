@@ -53,10 +53,18 @@ declared `outputSchema`: `{ status: "approval_required" | "ok" | "error", approv
 
 ## Setup
 
+Published on npm — no clone needed:
+
+```bash
+BWS_ACCESS_TOKEN=... npx -y @ivaisoft/bws-webauthn-mcp register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
+```
+
+Or from a local clone (for development):
+
 ```bash
 npm install
 npm run build
-BWS_ACCESS_TOKEN=... npm run register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
+BWS_ACCESS_TOKEN=... npm run register
 ```
 
 Credentials are stored as an **array** at
@@ -77,7 +85,7 @@ it may be sent to (missing entry = deny):
 ## Wire into Claude Code
 
 ```bash
-claude mcp add bws -- env BWS_ACCESS_TOKEN=<token> node /Users/danilo/Work/Projects/mcps/bws-webauthn-mcp/dist/index.js serve
+claude mcp add bws -- env BWS_ACCESS_TOKEN=<token> BWS_ORGANIZATION_ID=<org-id> npx -y @ivaisoft/bws-webauthn-mcp
 ```
 
 or in `~/.claude/settings.json`:
@@ -86,13 +94,16 @@ or in `~/.claude/settings.json`:
 {
   "mcpServers": {
     "bws": {
-      "command": "node",
-      "args": ["/Users/danilo/Work/Projects/mcps/bws-webauthn-mcp/dist/index.js", "serve"],
-      "env": { "BWS_ACCESS_TOKEN": "<token>" }
+      "command": "npx",
+      "args": ["-y", "@ivaisoft/bws-webauthn-mcp"],
+      "env": { "BWS_ACCESS_TOKEN": "<token>", "BWS_ORGANIZATION_ID": "<org-id>" }
     }
   }
 }
 ```
+
+From a local clone instead, replace `command`/`args` with
+`"node"` / `["/path/to/bws-webauthn-mcp/dist/index.js", "serve"]`.
 
 The approval server binds an **auto-picked free port** on `127.0.0.1`; the
 approval URL uses it. There is no fixed port to configure.
