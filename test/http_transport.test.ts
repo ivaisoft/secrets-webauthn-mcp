@@ -27,16 +27,24 @@ writeFileSync(join(CFG, "allowlist.json"), JSON.stringify({ s1: ["example.test"]
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 const { createHttpApp } = await import("../src/http-serve.js");
+const { requestKey } = await import("../src/request-key.js");
+const { HttpRequestArgsSchema } = await import("../src/schemas.js");
 type BwsGateway = import("../src/bws.js").BwsGateway;
 type Gate = import("../src/gate.js").Gate;
 
 const SECRET = "HTTP-TRANSPORT-SECRET-DO-NOT-LEAK";
-let approvals = 0;
+let approvalChecks = 0;
+const approvedKeys = new Set<string>();
 const fakeGate: Gate = {
   origin: "http://localhost:0",
   port: 0,
-  requireApproval: async () => {
-    approvals++;
+  checkApproval: (key: string) => {
+    approvalChecks++;
+    if (approvedKeys.has(key)) {
+      approvedKeys.delete(key);
+      return true;
+    }
+    return false;
   },
   close: () => {},
 };
@@ -86,7 +94,7 @@ await test("real MCP client can initialize over HTTP and list all three tools", 
   assert.ok(clientTransport.sessionId, "a session id must have been issued");
 });
 
-await test("tool call over HTTP goes through the Gate and injects the secret", async () => {
+await test("tool call over HTTP: not-yet-approved first, then proceeds after out-of-band approval", async () => {
   // The MCP client transport ALSO uses global fetch to talk to our own server
   // (to send this very tool call as a JSON-RPC POST) — only intercept the
   // TOOL's outbound request (to example.test), and pass everything else
@@ -101,15 +109,23 @@ await test("tool call over HTTP goes through the Gate and injects the secret", a
     return originalFetch(url as string, init);
   }) as typeof fetch;
   try {
-    const before = approvals;
-    const result = await client!.callTool({
-      name: "http_request",
-      arguments: { url: "http://example.test/x", secret_ids: ["s1"] },
-    });
-    assert.equal(approvals, before + 1, "the Gate must be invoked for a tool call made over HTTP");
+    const callArgs = { url: "http://example.test/x", secret_ids: ["s1"] };
+    const before = approvalChecks;
+
+    const first = await client!.callTool({ name: "http_request", arguments: callArgs });
+    assert.equal(approvalChecks, before + 1, "the Gate must be checked for a tool call made over HTTP");
+    const firstText = (first.content as { type: string; text: string }[])[0]!.text;
+    assert.equal(first.isError, true, "must not proceed before approval — this works with ANY MCP client");
+    assert.match(firstText, /physical approval required/i);
+
+    // Simulate a human having approved this exact request out of band.
+    approvedKeys.add(requestKey("http_request", HttpRequestArgsSchema.parse(callArgs)));
+
+    const second = await client!.callTool({ name: "http_request", arguments: callArgs });
+    assert.equal(second.isError, undefined, "the identical call must proceed once approved");
     assert.equal(sawAuthHeader, `Bearer ${SECRET}`);
-    const text = (result.content as { type: string; text: string }[])[0]!.text;
-    assert.ok(!text.includes(SECRET), "the secret must never appear in the tool result");
+    const secondText = (second.content as { type: string; text: string }[])[0]!.text;
+    assert.ok(!secondText.includes(SECRET), "the secret must never appear in the tool result");
   } finally {
     globalThis.fetch = originalFetch;
   }

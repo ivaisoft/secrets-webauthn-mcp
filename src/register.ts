@@ -22,6 +22,7 @@ import { BROWSER_BUNDLE, readJsonBody, send, sendJson } from "./http-util.js";
 import { CREDENTIALS_FILE } from "./paths.js";
 import {
   AuthenticationResponseSchema,
+  AuthenticatorAttachmentSchema,
   RegistrationResponseSchema,
   TransportSchema,
 } from "./schemas.js";
@@ -45,12 +46,15 @@ export async function runRegister(): Promise<void> {
     `<p>${escapeHtml(
       hasCredentials
         ? "An existing authenticator must Approve before a new one can be added."
-        : "Bind your Touch ID / passkey so it can Approve secret use.",
+        : "Bind an authenticator so it can Approve secret use.",
     )}</p>
-<button onclick="run()">${hasCredentials ? "Approve, then register" : "Register"}</button>
+<button onclick="run('platform')">${hasCredentials ? "Approve, then register this Mac (Touch ID)" : "Register this Mac (Touch ID)"}</button>
+<button onclick="run('cross-platform')">${hasCredentials ? "Approve, then register a phone / security key" : "Register a phone / security key"}</button>
+<p style="font-size:.85em;color:#666">Picking a kind matters: without it, some browsers save a
+password-protected iCloud Keychain passkey instead of a true Touch ID credential.</p>
 <script>
 var HAS_CREDS = ${hasCredentials ? "true" : "false"};
-async function run(){
+async function run(attachment){
   var s=document.getElementById('status');
   try{
     if(HAS_CREDS){
@@ -61,7 +65,7 @@ async function run(){
       if(!gr.verified){ s.textContent='\\u274c Approval failed: '+(gr.error||'not verified'); return; }
     }
     s.textContent='Registering new authenticator...';
-    var o=await fetch('/register/options').then(r=>r.json());
+    var o=await fetch('/register/options?attachment='+encodeURIComponent(attachment)).then(r=>r.json());
     var att=await SimpleWebAuthnBrowser.startRegistration({optionsJSON:o});
     var r=await fetch('/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(att)}).then(r=>r.json());
     s.textContent = r.verified ? '\\u2705 Registered. You can close this tab.' : '\\u274c '+(r.error||'not verified');
@@ -116,13 +120,25 @@ async function run(){
       // ---- registration ----
       if (path === "/register/options") {
         if (!approvalPassed) return sendJson(res, 403, { error: "Approval required" });
+        // Pin the attachment explicitly: without it, some browsers offer (or
+        // default to) a synced iCloud Keychain passkey instead of this Mac's
+        // Secure Enclave, which then prompts for the account password to
+        // unlock rather than Touch ID. Falls back to "platform" on anything
+        // unrecognized rather than leaving it unconstrained.
+        const attachment = AuthenticatorAttachmentSchema.catch("platform").parse(
+          url.searchParams.get("attachment") ?? undefined,
+        );
         const options = await generateRegistrationOptions({
           rpName: "bws-webauthn-mcp",
           rpID: RP_ID,
           userName: process.env.USER ?? "operator",
           attestationType: "none",
           excludeCredentials: existing.map((c) => toWebAuthnCredential(c)),
-          authenticatorSelection: { userVerification: "required", residentKey: "discouraged" },
+          authenticatorSelection: {
+            userVerification: "required",
+            residentKey: "discouraged",
+            authenticatorAttachment: attachment,
+          },
         });
         regChallenge = options.challenge;
         return sendJson(res, 200, options);

@@ -50,15 +50,20 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 - Returns child `stdout`+`stderr` and exit code.
 - No allowlist (command is arbitrary); the Gate prompt shows the full `argv` + injected env-var names + secret ids, and the human approves.
 
-## The Gate (WebAuthn via URL-mode elicitation)
+## The Gate (WebAuthn via request-key re-check — ADR 0006)
 
-1. Tool builds an `elicitationId` (rid) + WebAuthn authentication challenge listing **all** registered credentials in `allowCredentials`; stashes pending[rid].
-2. `mcp.server.elicitInput({ mode:"url", message, elicitationId: rid, url:"http://localhost:<port>/approve?rid=<rid>" }, { timeout })`. `message` states exactly what will happen (tool, secret ids, host **or** full argv).
-3. Browser page runs `SimpleWebAuthnBrowser.startAuthentication({ optionsJSON })` → Touch ID / Google passkey → POST assertion.
-4. Server verifies (`@simplewebauthn/server`), updates counter, marks pending[rid] verified, calls `mcp.server.createElicitationCompletionNotifier(rid)()` to auto-close the dialog.
-5. Tool proceeds **only** if `pending[rid].verified === true` and the elicit action is not `decline`/`cancel`. Otherwise throw.
+Not MCP elicitation — that depends on client support that isn't universal (a
+real client, "Cowork", has no elicitation UI at all, so a tool would hang
+forever waiting on it). Instead:
+
+1. Tool computes `key = requestKey(toolName, parsedArgs)` — a deterministic hash, so the exact same call always yields the same key (`src/request-key.ts`).
+2. `gate.checkApproval(key, message, ttlMs)`: if `key` has a verified pending entry, **consume it** (delete — single-use) and return `true`. Otherwise register `{message, verified:false, expiresAt: now+ttlMs}` and return `false`.
+3. If `false`: the tool returns plain **tool-result text** (not elicitation) — `message` plus `${gate.origin}/approve?rid=${key}` — instructing the human to open it and then re-issue the identical call. Works with any MCP client.
+4. Human opens the URL; the approve page runs `SimpleWebAuthnBrowser.startAuthentication({ optionsJSON })` → Touch ID / passkey → POST assertion. Server verifies (`@simplewebauthn/server`), updates the credential's counter, marks the pending entry `verified: true`.
+5. The identical tool call, re-issued, computes the same `key`, finds it verified, `checkApproval` consumes it and returns `true` — the tool proceeds.
 
 - `rpID = "localhost"`, `expectedOrigin = "http://localhost:<port>"`, `userVerification: "required"`.
+- Pending entries are swept on every check; unapproved ones expire after `ttlMs` (`BWS_GATE_TIMEOUT_MS`).
 
 ## Credentials (multi-authenticator)
 
@@ -79,7 +84,7 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 | `BWS_ACCESS_TOKEN` | — | **required** |
 | `BWS_ORGANIZATION_ID` | — | **required**, only used by `list_secrets` |
 | `BWS_API_URL` / `BWS_IDENTITY_URL` | bitwarden.com | EU / self-host |
-| `BWS_GATE_TIMEOUT_MS` | `120000` | elicitation wait |
+| `BWS_GATE_TIMEOUT_MS` | `120000` | pending-approval TTL (ADR 0006) |
 | `BWS_HTTP_PORT` | `8787` | only read by `serve --http` |
 
 ## Out of scope / caveats
@@ -90,9 +95,9 @@ exception: it returns no value and is deliberately ungated (ADR 0005).
 ## Verified library facts (don't re-derive)
 
 - **`@bitwarden/sdk-napi` ^1.0.0** (only published JS binding; prebuilt `darwin-arm64`). `new BitwardenClient(settings, 4)`; `await client.auth().loginAccessToken(token)`; `await client.secrets().get(id)` → `{ key, value, ... }`. `LogLevel` is a `const enum` (not exported at runtime) → pass numeric `4` (Error).
-- **`@modelcontextprotocol/sdk` ^1.29.0** has URL-mode elicitation: `mcp.server.elicitInput` accepts `{ mode:"url", message, elicitationId, url }`; `mcp.server.createElicitationCompletionNotifier(id)`; `ElicitResult.action ∈ {accept,decline,cancel}`.
+- **`@modelcontextprotocol/sdk` ^1.29.0** has URL-mode elicitation (`mcp.server.elicitInput`), but the Gate does not use it — see ADR 0006.
 - **`@simplewebauthn/server` ^13.3.2** + **`@simplewebauthn/browser` ^13.3.0** (serve the UMD bundle `dist/bundle/index.umd.min.js`, global `SimpleWebAuthnBrowser`, `startRegistration/startAuthentication({ optionsJSON })`). `verifyAuthenticationResponse({ response, expectedChallenge, expectedOrigin, expectedRPID, credential:{ id, publicKey:Uint8Array, counter, transports } })`. Stored credential shape `{ id: base64url, publicKey: Uint8Array, counter, transports }`.
-- Claude Code (this host) supports URL-mode elicitation.
+- Not every MCP client supports elicitation (confirmed: "Cowork" does not) — this is exactly why ADR 0006 moved the Gate off it.
 
 ## Delta vs the current spike (`index.mjs`)
 

@@ -8,3 +8,8 @@ front of `bws run`" (the token would still sit in the agent's environment) and
 why secrets are never returned to the conversation. The trade-off is loss of
 convenience: every secret use must go through this server's two tools
 (`http_request`, `run_with_secret`), each of which requires a fresh Approval.
+
+The mechanism by which "requires a fresh Approval" is enforced changed in
+[ADR 0006](./0006-request-key-approval-replaces-elicitation.md) — this
+invariant (token confined to this process, no path that skips a fresh
+Approval) is unaffected by that change.
