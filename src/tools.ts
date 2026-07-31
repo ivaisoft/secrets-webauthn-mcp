@@ -61,6 +61,28 @@ export function registerTools(ctx: ToolContext): void {
   const mcpLow = mcp.server;
 
   mcp.registerTool(
+    "list_secrets",
+    {
+      title: "List Bitwarden secret ids and names (no values, no Approval required)",
+      description:
+        "List every secret's id and key name in the configured organization. Never returns a " +
+        "value — this is discovery metadata only, so unlike http_request/run_with_secret it does " +
+        "NOT require a physical WebAuthn Approval. Use the returned id with http_request or " +
+        "run_with_secret.",
+      inputSchema: {},
+    },
+    async (): Promise<ToolResult> => {
+      const secrets = await bws.listSecrets();
+      // Explicit map, not a bare stringify of whatever BwsGateway.listSecrets()
+      // returns: this tool's contract is {id, key} only, enforced here too — not
+      // just trusted from the interface — so a future implementation that adds
+      // fields (or a bug in one) can't silently widen what this tool exposes.
+      const safe = secrets.map((s) => ({ id: s.id, key: s.key }));
+      return ok(JSON.stringify(safe, null, 2));
+    },
+  );
+
+  mcp.registerTool(
     "http_request",
     {
       title: "Call an HTTP endpoint with a Bitwarden secret injected (you never see the value)",

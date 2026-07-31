@@ -9,9 +9,15 @@ import { z } from "zod";
 /** Env for serve mode: the access token is required (it is the sole key to the vault). */
 export const ServeEnvSchema = z.object({
   BWS_ACCESS_TOKEN: z.string().min(1, "BWS_ACCESS_TOKEN is required"),
+  /** A machine account belongs to exactly one org; list_secrets needs it explicitly
+   *  (the SDK has no "list my orgs" call — required so misconfiguration fails at
+   *  startup, not with a confusing error the first time list_secrets is called). */
+  BWS_ORGANIZATION_ID: z.string().min(1, "BWS_ORGANIZATION_ID is required"),
   BWS_API_URL: z.string().url().default("https://api.bitwarden.com"),
   BWS_IDENTITY_URL: z.string().url().default("https://identity.bitwarden.com"),
   BWS_GATE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  /** Only read when `serve --http` is used; the stdio mode ignores this. */
+  BWS_HTTP_PORT: z.coerce.number().int().positive().default(8787),
 });
 export type ServeEnv = z.infer<typeof ServeEnvSchema>;
 

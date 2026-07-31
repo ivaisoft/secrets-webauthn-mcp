@@ -5,6 +5,7 @@ import { checkHostAllowed } from "./allowlist.js";
 import { base64ToPublicKey, publicKeyToBase64 } from "./credentials.js";
 import { resolveEnvName } from "./envname.js";
 import { escapeHtml } from "./html.js";
+import { isAllowedRequest } from "./http-guard.js";
 import type { Allowlist } from "./schemas.js";
 
 function assert(condition: boolean, message: string): void {
@@ -66,6 +67,26 @@ export function runSelfcheck(): void {
     escapeHtml('<a href="x">&\'') === "&lt;a href=&quot;x&quot;&gt;&amp;&#39;",
     "html escaping covers &<>\"'",
   );
+
+  // 5. HTTP transport Host/Origin guard (DNS-rebinding defense for `serve --http`).
+  const ports = ["127.0.0.1:8787", "localhost:8787"];
+  assert(
+    isAllowedRequest("127.0.0.1:8787", undefined, ports) === true,
+    "allow: known host, no Origin (typical non-browser MCP client)",
+  );
+  assert(
+    isAllowedRequest("127.0.0.1:8787", "http://127.0.0.1:8787", ports) === true,
+    "allow: known host with matching Origin",
+  );
+  assert(
+    isAllowedRequest("127.0.0.1:8787", "http://evil.example.com", ports) === false,
+    "deny: matching host but a foreign Origin (the rebinding attack itself)",
+  );
+  assert(
+    isAllowedRequest("evil.example.com", undefined, ports) === false,
+    "deny: unrecognized Host even with no Origin",
+  );
+  assert(isAllowedRequest(undefined, undefined, ports) === false, "deny: missing Host header");
 
   process.stdout.write("selfcheck ok\n");
 }

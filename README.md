@@ -19,15 +19,17 @@ any log.
 
 ## Tools
 
-Both require a fresh Approval and both accept a **list** of `secret_id`s (one touch
-authorizes the set). Neither ever returns a secret value.
+`http_request` and `run_with_secret` require a fresh Approval and both accept a
+**list** of `secret_id`s (one touch authorizes the set). Neither ever returns a
+secret value. `list_secrets` is the exception — see below.
 
 | Tool | What it does |
 |---|---|
+| `list_secrets()` | Lists every `{ id, key }` in the configured organization — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). Use the returned `id` with the other two tools. |
 | `http_request({ url, method?, secret_ids, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
 | `run_with_secret({ argv, secret_ids, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the secret's Bitwarden key name; override per secret with `env_overrides`). Returns the child's stdout, stderr, and exit code. No allowlist — the Gate prompt shows the full `argv`, the injected env-var names, and the secret ids, and the human approves. |
 
-Reference secrets by **UUID**.
+Reference secrets by **UUID** (get one from `list_secrets`).
 
 ## Requirements
 
@@ -84,13 +86,42 @@ or in `~/.claude/settings.json`:
 The approval server binds an **auto-picked free port** on `127.0.0.1`; the
 approval URL uses it. There is no fixed port to configure.
 
+## Streamable HTTP (opt-in, loopback-only)
+
+stdio is the default and is the more restrictive option — only the process a
+client directly spawns can talk to it. `serve --http` instead runs the MCP
+session over Streamable HTTP on `127.0.0.1:BWS_HTTP_PORT` (default `8787`), so
+more than one local MCP client can share a single running server:
+
+```bash
+BWS_ACCESS_TOKEN=... node dist/index.js serve --http
+```
+
+```json
+{
+  "mcpServers": {
+    "bws": { "type": "http", "url": "http://127.0.0.1:8787/mcp" }
+  }
+}
+```
+
+Every request's `Host`/`Origin` is checked before it reaches the MCP transport
+(see [ADR 0004](./docs/adr/0004-optional-streamable-http-transport-loopback-only.md))
+— without that check, a malicious web page open in your browser could reach
+this port via DNS rebinding and trigger Approval prompts. Requests with an
+unrecognized `Host` or a foreign `Origin` get a `403`. This only changes how
+the MCP *connection* is carried: the Gate (WebAuthn), the allowlist, and the
+vault token's confinement to this process are identical to stdio mode.
+
 ## Env
 
 | Var | Default | |
 |---|---|---|
 | `BWS_ACCESS_TOKEN` | — | **required**, machine-account token |
+| `BWS_ORGANIZATION_ID` | — | **required**, used by `list_secrets` (a machine account belongs to exactly one org) |
 | `BWS_API_URL` / `BWS_IDENTITY_URL` | bitwarden.com | set for EU / self-host |
 | `BWS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
+| `BWS_HTTP_PORT` | `8787` | only read by `serve --http` |
 
 ## What this does and does not protect
 
@@ -103,11 +134,18 @@ approval URL uses it. There is no fixed port to configure.
 - **Local only.** The `localhost` rpID trick means this must run as a local stdio
   server. Behind a real domain, WebAuthn re-binds to that domain and the model
   changes (see [ADR 0003](./docs/adr/0003-local-stdio-only-not-clustered.md)).
+- **`list_secrets` exposes names, not values, without a touch.** Any agent that
+  can call it can enumerate your secret ids and key names — the same
+  information your access token already exposes via `bws secret list`, just
+  made convenient for the agent. If that's not acceptable for your threat
+  model, don't wire this tool up (see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)).
 
 ## Audit log
 
-Every attempt appends one JSONL line to `~/.config/bws-webauthn-mcp/audit.log`
-(`{ ts, tool, secret_ids, host|argv0, verified }`) — never the value.
+Every `http_request`/`run_with_secret` attempt appends one JSONL line to
+`~/.config/bws-webauthn-mcp/audit.log` (`{ ts, tool, secret_ids, host|argv0,
+verified }`) — never the value. `list_secrets` calls are not audited: it never
+touches a specific secret's value, so there's no "use" to record.
 
 ## Selfcheck
 
