@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/ivaisoft/bws-webauthn-mcp/compare/v2.1.2...v2.2.0) (2026-07-31)
+
+
+### Features
+
+* redesign /approve and /register with a real design system ([79f5c42](https://github.com/ivaisoft/bws-webauthn-mcp/commit/79f5c427163f2eefc45d5604db45c8651770ef29))
+
 ## [2.1.2](https://github.com/ivaisoft/bws-webauthn-mcp/compare/v2.1.1...v2.1.2) (2026-07-31)
 
 
