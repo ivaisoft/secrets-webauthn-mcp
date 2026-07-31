@@ -1,3 +1,10 @@
+## [2.1.2](https://github.com/ivaisoft/bws-webauthn-mcp/compare/v2.1.1...v2.1.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* [secure] was published without the executable bit, breaking npx ([c9b25fc](https://github.com/ivaisoft/bws-webauthn-mcp/commit/c9b25fccd07c6d9fd29337a3dc103b5f787f6cf1))
+
 ## [2.1.1](https://github.com/ivaisoft/bws-webauthn-mcp/compare/v2.1.0...v2.1.1) (2026-07-31)
 
 
