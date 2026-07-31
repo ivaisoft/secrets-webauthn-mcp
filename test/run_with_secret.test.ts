@@ -45,6 +45,7 @@ const fakeBws = {
     if (!s) throw new Error("no such secret " + id);
     return s;
   },
+  listSecrets: async () => [],
 } as any;
 
 registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });

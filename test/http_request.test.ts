@@ -40,6 +40,7 @@ const fakeMcp = {
 const fakeGate = { requireApproval: async () => { events.push("approval"); } } as any;
 const fakeBws = {
   getSecret: async (id: string) => { events.push("getSecret:" + id); return { key: "API_KEY", value: SECRET }; },
+  listSecrets: async () => [],
 } as any;
 
 registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });

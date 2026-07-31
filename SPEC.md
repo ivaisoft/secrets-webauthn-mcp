@@ -14,17 +14,25 @@ values, where every use is authorized by a physical WebAuthn **Approval**.
 - **Secondary (#1):** a confused agent acting at the wrong time — the human at the Gate is the backstop.
 - **Out of scope (#3):** stolen laptop / local malware (whoever holds the token wins — mitigated only by least-privilege token scope, not by this server).
 
-## Architecture (ADR 0001, 0003)
+## Architecture (ADR 0001, 0003, 0004)
 
-- Single-file Node ESM stdio MCP server. Runs **locally only**.
+- Node ESM MCP server (TypeScript, compiled to `dist/`). Runs **locally only**.
 - `BWS_ACCESS_TOKEN` lives **only** in this process. The agent has no `bws` and no token. This server's two tools are the **sole** path to any secret. The Gate is unbypassable.
-- On start: log in to BWS, start a local approval HTTP server on `127.0.0.1` (auto-picked free port), connect stdio transport.
+- On start: log in to BWS, start a local approval HTTP server on `127.0.0.1` (auto-picked free port), connect the MCP transport.
+- **Transport:** `serve` (default) connects stdio. `serve --http` (opt-in, ADR 0004) instead runs Streamable HTTP on `127.0.0.1:BWS_HTTP_PORT`, with every request's Host/Origin checked (`src/http-guard.ts`) before it reaches the MCP transport — the DNS-rebinding defense a loopback HTTP listener needs that stdio doesn't. Either way the Gate (WebAuthn) is unchanged and still runs on its own separate ephemeral port.
 
 ## Tools
 
-Both **require a fresh Approval** — no cache, ever (ADR 0002). Both accept a
-**list** of `secret_id`s (one touch authorizes the set). Secret values are never
-returned to the agent.
+`http_request` and `run_with_secret` **require a fresh Approval** — no cache,
+ever (ADR 0002). Both accept a **list** of `secret_id`s (one touch authorizes
+the set). Secret values are never returned to the agent. `list_secrets` is the
+exception: it returns no value and is deliberately ungated (ADR 0005).
+
+### `list_secrets` — discovery (no Approval)
+
+- No args. Returns every `{ id, key }` in the configured org — never a value.
+- Requires `BWS_ORGANIZATION_ID` (the SDK's `list()` needs it explicitly; a machine account belongs to exactly one org).
+- Both `bws.ts` and the tool handler independently destructure to `{ id, key }` — never forward the raw SDK item.
 
 ### `http_request` — safe path (host allowlist)
 
@@ -69,8 +77,10 @@ returned to the agent.
 | Var | Default | |
 |---|---|---|
 | `BWS_ACCESS_TOKEN` | — | **required** |
+| `BWS_ORGANIZATION_ID` | — | **required**, only used by `list_secrets` |
 | `BWS_API_URL` / `BWS_IDENTITY_URL` | bitwarden.com | EU / self-host |
 | `BWS_GATE_TIMEOUT_MS` | `120000` | elicitation wait |
+| `BWS_HTTP_PORT` | `8787` | only read by `serve --http` |
 
 ## Out of scope / caveats
 

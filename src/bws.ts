@@ -14,8 +14,17 @@ export interface SecretHandle {
   value: string;
 }
 
+/** Identifier only — deliberately has no `value` field, so there is nothing to
+ *  mask: list_secrets destructures exactly these two fields, never the raw SDK
+ *  object, so a future SDK version adding fields here can't leak through it. */
+export interface SecretIdentifier {
+  id: string;
+  key: string;
+}
+
 export interface BwsGateway {
   getSecret(id: string): Promise<SecretHandle>;
+  listSecrets(): Promise<SecretIdentifier[]>;
 }
 
 export async function connectBws(env: ServeEnv): Promise<BwsGateway> {
@@ -33,6 +42,12 @@ export async function connectBws(env: ServeEnv): Promise<BwsGateway> {
     async getSecret(id: string): Promise<SecretHandle> {
       const secret = await client.secrets().get(id);
       return { key: secret.key, value: secret.value };
+    },
+    async listSecrets(): Promise<SecretIdentifier[]> {
+      const res = await client.secrets().list(env.BWS_ORGANIZATION_ID);
+      // Explicit destructure, not a spread: even though this SDK's list() has no
+      // `value` field today, never forward the raw item — only what we named above.
+      return res.data.map((item) => ({ id: item.id, key: item.key }));
     },
   };
 }
