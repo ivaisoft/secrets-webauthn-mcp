@@ -23,6 +23,22 @@ fresh Approval (see [ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)
 Secret values are **never** returned to the agent, placed in `argv`, or written to
 any log.
 
+## Quick start
+
+```bash
+# 1. Register once — binds Touch ID / passkey to this server
+BWS_ACCESS_TOKEN=... npx -y @ivaisoft/bws-webauthn-mcp register
+
+# 2. Wire it into your MCP client (see "Wire into Claude Code" below)
+```
+
+Then just ask the agent to use a secret. It calls `list_secrets` to find the
+right `id`, then `http_request` or `run_with_secret`. The first attempt
+returns an Approval URL instead of doing anything; you open it and tap Touch
+ID once; the agent re-issues the identical call and it succeeds — the value
+never appears anywhere in the conversation. See [Use cases](#use-cases) below
+for what that looks like end to end.
+
 ## Tools
 
 `http_request` and `run_with_secret` require a fresh Approval and both accept a
@@ -41,6 +57,93 @@ Reference secrets by **UUID** (get one from `list_secrets`).
 declared `outputSchema`: `{ status: "approval_required" | "ok" | "error", approve_url?, reason?, ... }`
 (plus `http_status`/`body` for `http_request`, `exit_code`/`stdout`/`stderr` for
 `run_with_secret`) — see [ADR 0007](./docs/adr/0007-structured-output-for-approval-required.md).
+
+## Use cases
+
+Concrete examples of what an agent actually does with these tools. In every
+case the agent never sees the secret value — only what's shown below — and
+every call goes through the same flow: first attempt → Approval URL → you tap
+Touch ID once → the agent re-issues the identical call → it succeeds.
+
+### Call a third-party API without exposing the key
+
+"Check the status of Stripe charge ch_123":
+
+```json
+{
+  "tool": "http_request",
+  "arguments": {
+    "url": "https://api.stripe.com/v1/charges/ch_123",
+    "secret_ids": ["<stripe-secret-key-id>"]
+  }
+}
+```
+
+`header`/`scheme` default to `Authorization: Bearer <value>` — override them
+for Basic auth or a custom header name. Needs an allowlist entry for
+`api.stripe.com` (see [Setup](#setup)). The agent gets back the charge JSON;
+the API key itself never enters the conversation.
+
+### Query a database
+
+"How many rows are in the `orders` table on prod?" — the password goes in as
+an env var, never as a CLI flag (which would leak it into `ps`/shell history):
+
+```json
+{
+  "tool": "run_with_secret",
+  "arguments": {
+    "argv": ["psql", "-h", "db.internal", "-U", "app", "-c", "select count(*) from orders;"],
+    "secret_ids": ["<db-password-secret-id>"],
+    "env_overrides": { "<db-password-secret-id>": "PGPASSWORD" }
+  }
+}
+```
+
+`psql` reads `PGPASSWORD` from its environment automatically.
+
+### Run a cloud CLI with temporary credentials
+
+"Deploy the staging Lambda" — inject AWS credentials for one `aws` invocation
+without ever exporting them into your shell:
+
+```json
+{
+  "tool": "run_with_secret",
+  "arguments": {
+    "argv": ["aws", "lambda", "update-function-code", "--function-name", "staging-api", "--zip-file", "fileb://dist.zip"],
+    "secret_ids": ["<aws-key-id-secret>", "<aws-secret-key-secret>"],
+    "env_overrides": {
+      "<aws-key-id-secret>": "AWS_ACCESS_KEY_ID",
+      "<aws-secret-key-secret>": "AWS_SECRET_ACCESS_KEY"
+    }
+  }
+}
+```
+
+### Trigger an internal webhook
+
+"Kick off the nightly sync" — a bearer token scoped by the allowlist to only
+that one internal host:
+
+```json
+{
+  "tool": "http_request",
+  "arguments": {
+    "url": "https://internal.example.com/api/sync/trigger",
+    "method": "POST",
+    "secret_ids": ["<webhook-token-id>"]
+  }
+}
+```
+
+### Find the right secret first
+
+Don't know the `id`? Ask the agent — `list_secrets` needs no Approval since it
+never returns a value:
+
+> "List the Bitwarden secrets available, then use the Stripe one to check
+> charge ch_123."
 
 ## Requirements
 
