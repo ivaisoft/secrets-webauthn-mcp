@@ -211,6 +211,45 @@ From a local clone instead, replace `command`/`args` with
 The approval server binds an **auto-picked free port** on `127.0.0.1`; the
 approval URL uses it. There is no fixed port to configure.
 
+## Wire into Postman (or any other MCP client)
+
+The `mcpServers` block above is the standard config format, so most clients
+take it as-is. In Postman, add an **MCP request** (**+** icon → **MCP** in the
+sidebar), pick **STDIO**, and either enter the command directly:
+
+```
+npx -y @ivaisoft/bws-webauthn-mcp
+```
+
+…or paste the JSON config. Use Postman **variables** rather than literal
+values, and define them in the Environment tab as secrets — otherwise the
+access token is stored in plain text in a collection you might share:
+
+```json
+{
+  "mcpServers": {
+    "bws-webauthn-mcp": {
+      "command": "npx",
+      "args": ["-y", "@ivaisoft/bws-webauthn-mcp"],
+      "env": {
+        "BWS_ACCESS_TOKEN": "{{bws_access_token}}",
+        "BWS_ORGANIZATION_ID": "{{bws_organization_id}}"
+      }
+    }
+  }
+}
+```
+
+Then **Load Capabilities** to see the three tools. `list_secrets` returns
+immediately; `http_request`/`run_with_secret` return
+`status: "approval_required"` with an `approve_url` you open in a real browser
+and approve with Touch ID / passkey, then re-send the identical request.
+
+Choosing **HTTP** (`http://127.0.0.1:8787/mcp`, with `serve --http` running)
+also works, with one caveat: the DNS-rebinding guard rejects any unrecognized
+`Origin` with a `403`. Non-browser clients don't send one and pass fine — but
+if your client does, use STDIO instead.
+
 ## Streamable HTTP (opt-in, loopback-only)
 
 stdio is the default and is the more restrictive option — only the process a
