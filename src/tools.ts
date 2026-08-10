@@ -110,31 +110,49 @@ function resolveSchemes(scheme: string | string[], count: number): string[] {
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** Why list_secrets came back empty, in terms the caller can act on. Only
- *  Bitwarden enumerates (ADR 0010), so "empty" means different things depending
- *  on whether it is configured at all. */
-function emptyListExplanation(configured: readonly StoreName[]): string {
-  const stores = configured.length > 0 ? configured.join(", ") : "none";
-  const head = `No listable secrets.\n\nConfigured Stores: ${stores}.`;
+/** Why list_secrets came back empty, in terms the caller can act on. Which
+ *  Stores enumerate is a runtime fact, not a property of their names (ADR 0010:
+ *  SSM lists only under a configured prefix, Secrets Manager never does), so an
+ *  empty result has several distinct causes worth telling apart. */
+function emptyListExplanation(
+  configured: readonly StoreName[],
+  enumerable: readonly StoreName[],
+): string {
+  const head = `No listable secrets.\n\nConfigured Stores: ${configured.join(", ") || "none"}.`;
   const usage =
-    "AWS references are self-describing names, so use them directly without listing:\n" +
+    "\n\nEvery secret is addressable whether or not it lists — AWS references are " +
+    "self-describing names:\n" +
     "  ssm:/prod/app/STRIPE_KEY\n" +
     "  secretsmanager:prod/db#password\n\n" +
     "This result says nothing about whether the AWS credential works: list_secrets " +
-    "never calls AWS. Only http_request / run_with_secret do.";
+    "never calls GetParameter or GetSecretValue. Only http_request / run_with_secret do.";
 
-  if (!configured.includes("bws")) {
+  if (enumerable.length > 0) {
     return (
-      `${head}\n\nOnly the Bitwarden Store can be enumerated, and it is not configured. ` +
-      `The AWS Stores deliberately do not list (ADR 0010): it would need an ` +
-      `account-wide IAM grant that reading known parameters does not.\n\n${usage}`
+      `${head}\n\nEnumerable Stores: ${enumerable.join(", ")} — they were queried and ` +
+      `returned nothing. Check that BWS_ORGANIZATION_ID names the right organization and ` +
+      `its project has secrets, and that SSM_PATH_PREFIX points at a path that actually ` +
+      `has parameters under it.${usage}`
     );
   }
-  return (
-    `${head}\n\nBitwarden is configured and is listable, but returned nothing — check that ` +
-    `BWS_ORGANIZATION_ID is the right organization and that the machine account's project ` +
-    `actually contains secrets. The AWS Stores never list (ADR 0010).\n\n${usage}`
-  );
+
+  const reasons: string[] = [];
+  if (!configured.includes("bws")) {
+    reasons.push("Bitwarden is not configured; it enumerates whenever it is.");
+  }
+  if (configured.includes("ssm")) {
+    reasons.push(
+      "SSM Parameter Store enumerates only when SSM_PATH_PREFIX is set (e.g. /prod/app). " +
+        "Without a prefix, listing would mean enumerating the whole account.",
+    );
+  }
+  if (configured.includes("secretsmanager")) {
+    reasons.push(
+      "AWS Secrets Manager never enumerates: secretsmanager:ListSecrets has no " +
+        "resource-level IAM form, so it cannot be scoped (ADR 0010).",
+    );
+  }
+  return `${head}\n\nNothing configured here can be enumerated:\n- ${reasons.join("\n- ")}${usage}`;
 }
 
 export function registerTools(ctx: ToolContext): void {
@@ -147,10 +165,11 @@ export function registerTools(ctx: ToolContext): void {
       description:
         "List every secret reference and key name this server can enumerate. Never returns a " +
         "value — this is discovery metadata only, so unlike http_request/run_with_secret it does " +
-        "NOT require a physical WebAuthn Approval. Only Bitwarden is enumerable: AWS SSM " +
-        "Parameter Store and Secrets Manager references are self-describing names you already " +
-        "know (e.g. ssm:/prod/app/STRIPE_KEY), and listing them would need an account-wide IAM " +
-        "grant. Use a returned reference with http_request or run_with_secret.",
+        "NOT require a physical WebAuthn Approval. Bitwarden always enumerates; SSM Parameter " +
+        "Store enumerates under the server's configured path prefix; AWS Secrets Manager never " +
+        "does, because its listing API cannot be scoped by IAM. Secrets that do not appear here " +
+        "are still usable — AWS references are self-describing names (e.g. " +
+        "ssm:/prod/app/STRIPE_KEY). Use a returned reference with http_request or run_with_secret.",
       inputSchema: {},
     },
     async () => {
@@ -167,7 +186,11 @@ export function registerTools(ctx: ToolContext): void {
       // a working setup as a failure — and doesn't read this as evidence about
       // the AWS credential either, which this tool never touches.
       if (safe.length === 0) {
-        return { content: [{ type: "text" as const, text: emptyListExplanation(stores.configured) }] };
+        return {
+          content: [
+            { type: "text" as const, text: emptyListExplanation(stores.configured, stores.enumerable) },
+          ],
+        };
       }
       return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
     },

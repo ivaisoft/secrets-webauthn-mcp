@@ -40,6 +40,10 @@ export interface SecretStore {
 export interface StoreRegistry {
   /** Which Stores are actually configured on this server. */
   configured: StoreName[];
+  /** The subset of `configured` that can enumerate. Whether a Store lists is a
+   *  runtime fact (SSM lists only when a path prefix is configured), so callers
+   *  must not infer it from the Store's name. */
+  enumerable: StoreName[];
   /** Resolve a reference to its value, including `#subkey` extraction. */
   get(ref: SecretRef): Promise<SecretHandle>;
   /** Every enumerable Store's contents, as full Secret References. */
@@ -85,9 +89,11 @@ function selectSubkey(handle: SecretHandle, ref: SecretRef, subkey: string): Sec
 
 export function createStoreRegistry(stores: Partial<Record<StoreName, SecretStore>>): StoreRegistry {
   const configured = (Object.keys(stores) as StoreName[]).filter((name) => stores[name] !== undefined);
+  const enumerable = configured.filter((name) => typeof stores[name]?.listSecrets === "function");
 
   return {
     configured,
+    enumerable,
 
     async get(ref: SecretRef): Promise<SecretHandle> {
       const store = stores[ref.store];

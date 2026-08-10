@@ -75,7 +75,7 @@ the set, which may span Stores). Secret values are never returned to the agent.
 ### `list_secrets` — discovery (no Approval)
 
 - No args. Returns every `{ id, key }` it can enumerate — never a value. `id` is a full Secret Reference, directly pasteable into `secret_refs`.
-- **Bitwarden only** (ADR 0010). The AWS Stores implement no listing: `ssm:DescribeParameters` and `secretsmanager:ListSecrets` have no resource-level IAM form, so enumerating would force an account-wide grant. AWS references are self-describing names, so nothing is lost.
+- **A Store enumerates only if the permission to enumerate can be scoped no wider than the permission to read** (ADR 0010). Bitwarden always does; SSM does under `SSM_PATH_PREFIX` via `GetParametersByPath` (resource-scopable, `WithDecryption: false`); Secrets Manager never does, because `ListSecrets` has no resource-level IAM form. Unlisted secrets remain fully usable — AWS references are self-describing names.
 - Requires `BWS_ORGANIZATION_ID` when Bitwarden is configured (the SDK's `list()` needs it explicitly; a machine account belongs to exactly one org).
 - Both the Store implementation and the tool handler independently destructure to `{ id, key }` — never forward the raw SDK item.
 
@@ -144,6 +144,7 @@ AWS Stores, `SECRETS_*` the server itself.
 | `AWS_REGION` | — | enables the AWS Stores |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | — | static-keys mode |
 | `AWS_SSO_START_URL` / `AWS_SSO_REGION` / `AWS_SSO_ACCOUNT_ID` / `AWS_SSO_ROLE_NAME` | — | SSO device-flow mode (all four, or none) |
+| `SSM_PATH_PREFIX` | — | enables Parameter Store listing, scoped to this path |
 | `SECRETS_GATE_TIMEOUT_MS` | `120000` | pending-approval TTL (ADR 0006) |
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
 

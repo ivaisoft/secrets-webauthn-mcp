@@ -1,30 +1,44 @@
-# The AWS Stores are not enumerable; `list_secrets` stays Bitwarden-only
+# Enumeration is allowed exactly as far as IAM can scope it
 
-`list_secrets` returns the contents of the Bitwarden Store only. The SSM
-Parameter Store and Secrets Manager Stores implement no `listSecrets` at all, so
-this server's AWS credential never needs a permission beyond reading the
-parameters it is actually asked for.
+`list_secrets` enumerates the Bitwarden Store always, the SSM Parameter Store
+under an explicitly configured path prefix, and AWS Secrets Manager never. The
+rule underneath is one line: **a Store may enumerate only if the permission to
+enumerate can be scoped no wider than the permission to read.**
 
-This is a deliberate narrowing of
-[ADR 0005](./0005-list-secrets-ungated-metadata-only.md), whose argument for an
-ungated listing does not survive the move to AWS.
+This narrows [ADR 0005](./0005-list-secrets-ungated-metadata-only.md), whose
+argument for an ungated listing does not survive the move to AWS unchanged.
 
-## Why 0005's reasoning does not carry
+> **Correction.** This ADR originally concluded that *neither* AWS Store could
+> enumerate, on the grounds that `ssm:DescribeParameters` requires
+> `Resource: "*"`. That is true of `DescribeParameters` and false of the call
+> that should have been considered: `ssm:GetParametersByPath` **does** support
+> resource-level permissions, so listing under a prefix needs no grant beyond
+> the `GetParameter` on that same prefix. The conclusion below is corrected for
+> SSM; it stands unchanged for Secrets Manager.
+
+## Why 0005's reasoning does not carry unchanged
 
 ADR 0005 justified an ungated listing on the grounds that it "adds no new
-disclosure beyond what the token already grants." Two things break that on AWS:
+disclosure beyond what the token already grants." On AWS that is a property of
+the specific API, not of the service:
 
-**The IAM grant is not narrowable.** `ssm:DescribeParameters` and
-`secretsmanager:ListSecrets` have no resource-level form — AWS requires
-`Resource: "*"`. So supporting enumeration would force this server's policy to
-carry an account-wide grant, strictly wider than the `GetParameter` /
-`GetSecretValue` on an ARN prefix that reading known secrets needs. That matters
-most in the static-keys mode, where the credential is a long-lived value sitting
-in an environment.
+| Call | Resource-level IAM | Verdict |
+|---|---|---|
+| `ssm:GetParametersByPath` | yes, on the path | enumerate, scoped to `SSM_PATH_PREFIX` |
+| `ssm:DescribeParameters` | no, `Resource: "*"` | not used |
+| `secretsmanager:ListSecrets` | no, `Resource: "*"` | never enumerates |
 
 **Parameter paths are an infrastructure map.** `/prod/paperclip/db/password`
 and `/staging/ombrello/stripe/secret` describe environments, applications and
-topology at a level a flat list of Bitwarden key names does not.
+topology at a level a flat list of Bitwarden key names does not. That is why SSM
+listing is off unless a prefix is configured: enumerating from `/` would hand
+over the whole map, which is the disclosure this ADR exists to prevent, even
+though the IAM grant would technically permit scoping it.
+
+Listing uses `WithDecryption: false`, so `SecureString` values come back as KMS
+ciphertext rather than plaintext — and the Store still destructures to
+`{ id, key }` and never forwards the SDK item, the same two-layer discipline
+ADR 0005 established.
 
 ## Why nothing is lost
 

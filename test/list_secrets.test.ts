@@ -109,13 +109,53 @@ await test("AWS-only: an empty result explains itself instead of returning a bar
 
   assert.notEqual(text.trim(), "[]", "a bare [] reads as a broken server");
   assert.match(text, /ssm, secretsmanager/, "must name the Stores that are configured");
-  assert.match(text, /not configured/i, "must say Bitwarden — the only listable Store — is absent");
+  assert.match(text, /not configured/i, "must say Bitwarden is absent");
   assert.match(text, /ssm:\/prod\/app\/STRIPE_KEY/, "must show how to address AWS secrets without listing");
   assert.match(
     text,
-    /never calls AWS/i,
+    /says nothing about whether the AWS credential works/i,
     "must not let an empty list be read as evidence about the AWS credential",
   );
+  assert.match(
+    text,
+    /SSM_PATH_PREFIX/,
+    "must say how to turn Parameter Store listing on, since that is the actionable fix",
+  );
+  assert.match(
+    text,
+    /resource-level IAM form/,
+    "must distinguish Secrets Manager, which cannot be made to list at all",
+  );
+});
+
+await test("SSM listing, when a prefix is configured, returns ssm: references", async () => {
+  // createSsmStore's GetParametersByPath call itself needs the AWS SDK and is
+  // not exercised here; this locks the contract the registry depends on — that
+  // a listing Store's ids come back namespaced and pasteable into secret_refs.
+  const withPrefix = createStoreRegistry({
+    ssm: {
+      getSecret: async () => { throw new Error("list must not fetch values"); },
+      listSecrets: async () => [
+        { id: "/ombrello/prod/DB_PASSWORD", key: "DB_PASSWORD" },
+        { id: "/ombrello/prod/STRIPE_KEY", key: "STRIPE_KEY" },
+      ],
+    } as any,
+    secretsmanager: fakeSsmStore,
+  });
+  assert.deepEqual(withPrefix.enumerable, ["ssm"], "only the Store that implements listing counts");
+
+  const localHandlers: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, h: any) => { localHandlers[n] = h; } } as any,
+    gate: fakeGate,
+    stores: withPrefix,
+    timeoutMs: 1000,
+  });
+  const parsed = JSON.parse((await localHandlers["list_secrets"]!({})).content[0].text as string);
+  assert.deepEqual(parsed, [
+    { id: "ssm:/ombrello/prod/DB_PASSWORD", key: "DB_PASSWORD" },
+    { id: "ssm:/ombrello/prod/STRIPE_KEY", key: "STRIPE_KEY" },
+  ]);
 });
 
 await test("Bitwarden configured but empty points at org/project, not at the AWS Stores", async () => {
