@@ -128,11 +128,19 @@ function emptyListExplanation(
     "never calls GetParameter or GetSecretValue. Only http_request / run_with_secret do.";
 
   if (enumerable.length > 0) {
+    // Name only the knobs that exist on THIS server: telling an AWS-only setup
+    // to check BWS_ORGANIZATION_ID sends the reader after a variable they do
+    // not have, which is worse than saying less.
+    const checks: string[] = [];
+    if (enumerable.includes("bws")) {
+      checks.push("BWS_ORGANIZATION_ID names the right organization and its project has secrets");
+    }
+    if (enumerable.includes("ssm")) {
+      checks.push("SSM_PATH_PREFIX points at a path that actually has parameters under it");
+    }
     return (
       `${head}\n\nEnumerable Stores: ${enumerable.join(", ")} — they were queried and ` +
-      `returned nothing. Check that BWS_ORGANIZATION_ID names the right organization and ` +
-      `its project has secrets, and that SSM_PATH_PREFIX points at a path that actually ` +
-      `has parameters under it.${usage}`
+      `returned nothing. Check that ${checks.join(", and that ")}.${usage}`
     );
   }
 
@@ -173,7 +181,15 @@ export function registerTools(ctx: ToolContext): void {
       inputSchema: {},
     },
     async () => {
-      const secrets = await stores.list();
+      const listing = await stores.list();
+      const secrets = listing.secrets;
+      // A Store that errored is reported, never quietly dropped: a short list
+      // that omits a failed Store reads as "this is everything".
+      const failureNote =
+        listing.failures.length > 0
+          ? `\n\nStores that failed to list: ` +
+            listing.failures.map((f) => `${f.store} (${f.reason})`).join("; ")
+          : "";
       // Explicit map, not a bare stringify of whatever the registry returns:
       // this tool's contract is {id, key} only, enforced here too — not just
       // trusted from the interface — so a future Store that adds fields (or a
@@ -188,11 +204,16 @@ export function registerTools(ctx: ToolContext): void {
       if (safe.length === 0) {
         return {
           content: [
-            { type: "text" as const, text: emptyListExplanation(stores.configured, stores.enumerable) },
+            {
+              type: "text" as const,
+              text: emptyListExplanation(stores.configured, stores.enumerable) + failureNote,
+            },
           ],
         };
       }
-      return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) + failureNote }],
+      };
     },
   );
 
@@ -335,7 +356,7 @@ export function registerTools(ctx: ToolContext): void {
       // fetches a value, so it's safe to call before Approval. Only Bitwarden
       // enumerates (ADR 0010); for AWS the reference already IS the name, so the
       // default env var name is derived from it rather than looked up.
-      const known = await stores.list().catch(() => []);
+      const known = await stores.list().then((l) => l.secrets).catch(() => []);
       const keyByRef = new Map(known.map((s) => [s.id, s.key]));
       const envDisplay = refs
         .map((ref) => {

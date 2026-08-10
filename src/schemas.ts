@@ -48,7 +48,15 @@ export const AwsEnvSchema = z.object({
   SSM_PATH_PREFIX: z
     .string()
     .min(1)
-    .regex(/^\//, "SSM_PATH_PREFIX must start with '/' (e.g. /prod/app)")
+    // Requires at least one path segment, so "/" and "//" are rejected. A bare
+    // "/" would pass a leading-slash-only check and produce exactly the
+    // account-wide GetParametersByPath({Path:"/", Recursive:true}) sweep this
+    // option exists to prevent — the guard has to be code, not a comment.
+    .regex(
+      /^\/[^/]/,
+      "SSM_PATH_PREFIX must be a path with at least one segment (e.g. /prod/app); " +
+        "\"/\" would enumerate the whole account",
+    )
     .optional(),
   /** Setting AWS_SSO_START_URL is what opts into the SSO device flow. */
   AWS_SSO_START_URL: z.string().url().optional(),
@@ -124,6 +132,12 @@ export const ServeEnvSchema = BwsEnvSchema.merge(AwsEnvSchema)
     }
 
     const aws = env.AWS_REGION !== undefined && (staticKeys || sso);
+    // Without this, setting only SSM_PATH_PREFIX is a silent no-op: no Store is
+    // built, the startup log line lives inside `if (aws)` so nothing is
+    // printed, and list_secrets never mentions SSM at all.
+    if (env.SSM_PATH_PREFIX !== undefined && !aws) {
+      issue("SSM_PATH_PREFIX is set but no AWS Store is configured (needs AWS_REGION and a credential)");
+    }
     if (!bws && !aws) {
       issue(
         "no Store is configured: set BWS_ACCESS_TOKEN (+ BWS_ORGANIZATION_ID) for Bitwarden, " +

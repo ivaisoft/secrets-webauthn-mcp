@@ -24,7 +24,7 @@ the specific API, not of the service:
 
 | Call | Resource-level IAM | Verdict |
 |---|---|---|
-| `ssm:GetParametersByPath` | yes, on the path | enumerate, scoped to `SSM_PATH_PREFIX` |
+| `ssm:GetParametersByPath` | yes, on the **path** ARN — `parameter/prod/app`, not `parameter/prod/app/*` | enumerate, scoped to `SSM_PATH_PREFIX` |
 | `ssm:DescribeParameters` | no, `Resource: "*"` | not used |
 | `secretsmanager:ListSecrets` | no, `Resource: "*"` | never enumerates |
 
@@ -34,6 +34,12 @@ topology at a level a flat list of Bitwarden key names does not. That is why SSM
 listing is off unless a prefix is configured: enumerating from `/` would hand
 over the whole map, which is the disclosure this ADR exists to prevent, even
 though the IAM grant would technically permit scoping it.
+
+The path ARN is the trap: `GetParameter` authorizes per parameter and matches
+`parameter/prod/app/*`, while `GetParametersByPath` authorizes against the path
+itself, which that wildcard does not match. A policy carrying only the wildcard
+denies every list. The README grants both forms, which cover the same subtree
+under either reading.
 
 Listing uses `WithDecryption: false`, so `SecureString` values come back as KMS
 ciphertext rather than plaintext — and the Store still destructures to

@@ -158,6 +158,36 @@ await test("SSM listing, when a prefix is configured, returns ssm: references", 
   ]);
 });
 
+await test("one Store failing does not discard another's results, and is reported", async () => {
+  // The expected state for anyone who sets SSM_PATH_PREFIX before adding
+  // GetParametersByPath to their IAM policy. Before the fix this threw out of
+  // the whole tool, taking Bitwarden's already-fetched list with it.
+  const denied = Object.assign(new Error("User: arn:aws:iam::1234:user/x is not authorized"), {
+    name: "AccessDeniedException",
+  });
+  const mixed = createStoreRegistry({
+    bws: { getSecret: async () => { throw new Error("no"); }, listSecrets: async () => [{ id: "s1", key: "API_KEY" }] } as any,
+    ssm: { getSecret: async () => { throw new Error("no"); }, listSecrets: async () => { throw denied; } } as any,
+  });
+  const localHandlers: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, h: any) => { localHandlers[n] = h; } } as any,
+    gate: fakeGate,
+    stores: mixed,
+    timeoutMs: 1000,
+  });
+  const text = (await localHandlers["list_secrets"]!({})).content[0].text as string;
+
+  assert.match(text, /bws:s1/, "the Store that succeeded must still be listed");
+  assert.match(text, /failed to list/i, "the Store that failed must be named, not silently dropped");
+  assert.match(text, /AccessDeniedException/, "the reason must be actionable");
+  assert.match(text, /ssm:GetParametersByPath/, "and should point at the missing permission");
+  assert.ok(
+    !text.includes("arn:aws:iam::1234:user/x"),
+    "the raw AWS message embeds the calling principal's ARN — do not forward it to the agent",
+  );
+});
+
 await test("Bitwarden configured but empty points at org/project, not at the AWS Stores", async () => {
   const emptyBws = createStoreRegistry({
     bws: { getSecret: async () => { throw new Error("no"); }, listSecrets: async () => [] } as any,
