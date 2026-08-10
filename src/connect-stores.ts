@@ -6,8 +6,16 @@
 // Kept separate from store.ts so that module stays free of the Bitwarden native
 // binding: tools.ts imports only types from store.ts, which is what lets the
 // test suite exercise the tools without a platform-specific binding present.
+//
+// bws.js is imported lazily, and that is load-bearing rather than tidiness. It
+// pulls in @bitwarden/sdk-napi, a native binding with prebuilts only for
+// darwin-arm64; a static import would load it even on an AWS-only server, and
+// on any platform where it fails to resolve the process would die before
+// speaking a single byte of MCP — the client just sees the connection close,
+// with no hint that an unconfigured Store caused it. "Bitwarden is optional"
+// has to be true at module load, not only in the config. index.ts already
+// defers heavy modules for exactly this reason.
 import { resolveAwsAuth } from "./aws-credentials.js";
-import { createBwsStore } from "./bws.js";
 import type { ServeEnv } from "./schemas.js";
 import type { StoreName } from "./secret-ref.js";
 import { createSecretsManagerStore } from "./secretsmanager.js";
@@ -21,6 +29,7 @@ export async function connectStores(
   const stores: Partial<Record<StoreName, SecretStore>> = {};
 
   if (env.BWS_ACCESS_TOKEN !== undefined) {
+    const { createBwsStore } = await import("./bws.js");
     stores.bws = await createBwsStore(env);
   }
 
