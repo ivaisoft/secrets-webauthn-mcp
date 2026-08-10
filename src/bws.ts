@@ -1,38 +1,31 @@
-// Bitwarden Secrets Manager access. The access token lives ONLY inside this
+// The Bitwarden Secrets Manager Store. The access token lives ONLY inside this
 // process; it is never returned, logged, or placed in any child environment.
+//
+// This is the one Store that enumerates: Bitwarden ids are opaque UUIDs, so
+// without list_secrets every reference would have to be copied out of the
+// Bitwarden UI by hand (ADR 0005). The AWS Stores need no equivalent — their
+// references are self-describing names (ADR 0010).
 import { BitwardenClient } from "@bitwarden/sdk-napi";
-import type { ServeEnv } from "./schemas.js";
+import type { BwsEnv } from "./schemas.js";
+import type { SecretHandle, SecretIdentifier, SecretStore } from "./store.js";
 
 // LogLevel is a `const enum` in @bitwarden/sdk-napi (not exported at runtime).
 // 4 === LogLevel.Error — keeps the native binding quiet on stderr.
 const LOG_LEVEL_ERROR = 4;
 
-export interface SecretHandle {
-  /** The Bitwarden key name — used as the default env var name in run_with_secret. */
-  key: string;
-  /** The plaintext value. Held only transiently; never returned to the agent. */
-  value: string;
-}
+export async function createBwsStore(env: BwsEnv): Promise<SecretStore> {
+  if (!env.BWS_ACCESS_TOKEN || !env.BWS_ORGANIZATION_ID) {
+    // Unreachable via loadServeEnv (superRefine rejects this pairing), but the
+    // Store must not depend on a caller having checked.
+    throw new Error("the Bitwarden Store needs both BWS_ACCESS_TOKEN and BWS_ORGANIZATION_ID");
+  }
+  const organizationId = env.BWS_ORGANIZATION_ID;
 
-/** Identifier only — deliberately has no `value` field, so there is nothing to
- *  mask: list_secrets destructures exactly these two fields, never the raw SDK
- *  object, so a future SDK version adding fields here can't leak through it. */
-export interface SecretIdentifier {
-  id: string;
-  key: string;
-}
-
-export interface BwsGateway {
-  getSecret(id: string): Promise<SecretHandle>;
-  listSecrets(): Promise<SecretIdentifier[]>;
-}
-
-export async function connectBws(env: ServeEnv): Promise<BwsGateway> {
   const client = new BitwardenClient(
     {
       apiUrl: env.BWS_API_URL,
       identityUrl: env.BWS_IDENTITY_URL,
-      userAgent: "bws-webauthn-mcp",
+      userAgent: "secrets-webauthn-mcp",
     },
     LOG_LEVEL_ERROR,
   );
@@ -44,7 +37,7 @@ export async function connectBws(env: ServeEnv): Promise<BwsGateway> {
       return { key: secret.key, value: secret.value };
     },
     async listSecrets(): Promise<SecretIdentifier[]> {
-      const res = await client.secrets().list(env.BWS_ORGANIZATION_ID);
+      const res = await client.secrets().list(organizationId);
       // Explicit destructure, not a spread: even though this SDK's list() has no
       // `value` field today, never forward the raw item — only what we named above.
       return res.data.map((item) => ({ id: item.id, key: item.key }));

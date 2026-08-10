@@ -1,9 +1,10 @@
-# bws-webauthn-mcp
+# secrets-webauthn-mcp
 
-MCP server for **Bitwarden Secrets Manager** that lets an agent **use** a secret
-without ever seeing its value. Every use is authorized by a fresh **physical
-WebAuthn Approval** (Touch ID / passkey) — via a mechanism that works with
-**any** MCP client, not just ones that support elicitation (see
+MCP server for **Bitwarden Secrets Manager**, **AWS SSM Parameter Store** and
+**AWS Secrets Manager** that lets an agent **use** a secret without ever seeing
+its value. Every use is authorized by a fresh **physical WebAuthn Approval**
+(Touch ID / passkey) — via a mechanism that works with **any** MCP client, not
+just ones that support elicitation (see
 [ADR 0006](./docs/adr/0006-request-key-approval-replaces-elicitation.md)):
 
 ```
@@ -16,18 +17,42 @@ A client that understands `structuredContent` (ADR 0007) can detect
 `status === "approval_required"` and read `approve_url` directly, instead of
 parsing the prose.
 
-The `BWS_ACCESS_TOKEN` lives **only** inside this server process; the agent has no
-`bws` and no token. These two tools are the **sole** path to any secret, and the
-Gate is unbypassable. There is **no cache** — every single use requires its own
-fresh Approval (see [ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)).
-Secret values are **never** returned to the agent, placed in `argv`, or written to
-any log.
+Every **Store** credential lives **only** inside this server process; the agent
+has no `bws`, no token, and no AWS credential. These tools are the **sole** path
+to any secret, and the Gate is unbypassable. There is **no cache** — every single
+use requires its own fresh Approval (see
+[ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)). Secret values are
+**never** returned to the agent, placed in `argv`, or written to any log.
+
+## Secret References
+
+A secret is addressed as `<store>:<id>[#subkey]`. The prefix is **mandatory** —
+an unprefixed id is rejected rather than assumed to be Bitwarden, because the
+string you read on the Approval page has to tell you where the value is about
+to come from.
+
+```
+bws:9f3c4e2a-…                    Bitwarden Secrets Manager
+ssm:/prod/app/STRIPE_KEY          AWS SSM Parameter Store
+secretsmanager:prod/db#password   AWS Secrets Manager, one field of a JSON secret
+```
+
+`#subkey` picks one top-level key out of a JSON secret and works for every
+Store. One Approval covers all the references in a call, even across Stores.
+
+**This server never reads `~/.aws`.** Not `credentials`, not `config`, not
+`sso/cache`, and never the default credential chain — because `aws sso login`'s
+cache is readable by any process running as you, including the prompt-injected
+agent this whole design exists to stop
+([ADR 0009](./docs/adr/0009-aws-credentials-not-ambient-not-from-a-store.md)).
+AWS credentials come from this process's own environment, or from an SSO device
+flow the server runs itself and keeps in memory.
 
 ## Quick start
 
 ```bash
 # 1. Register once — binds Touch ID / passkey to this server
-BWS_ACCESS_TOKEN=... npx -y @ivaisoft/bws-webauthn-mcp register
+BWS_ACCESS_TOKEN=... npx -y @ivaisoft/secrets-webauthn-mcp register
 
 # 2. Wire it into your MCP client (see "Wire into Claude Code" below)
 ```
@@ -42,16 +67,17 @@ for what that looks like end to end.
 ## Tools
 
 `http_request` and `run_with_secret` require a fresh Approval and both accept a
-**list** of `secret_id`s (one touch authorizes the set). Neither ever returns a
-secret value. `list_secrets` is the exception — see below.
+**list** of Secret References (one touch authorizes the set, which may span
+Stores). Neither ever returns a secret value. `list_secrets` is the exception —
+see below.
 
 | Tool | What it does |
 |---|---|
-| `list_secrets()` | Lists every `{ id, key }` in the configured organization — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). Use the returned `id` with the other two tools. |
-| `http_request({ url, method?, secret_ids, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
-| `run_with_secret({ argv, secret_ids, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the secret's Bitwarden key name; override per secret with `env_overrides`). Returns the child's stdout, stderr, and exit code. No allowlist — the Approval prompt shows `argv` (shell-quoted for a faithful, readable display), each secret's **real Bitwarden key name** (id + name only — never the value, same lookup `list_secrets` uses), and the injected env-var name, and the human approves. |
+| `list_secrets()` | Lists every `{ id, key }` it can enumerate — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). `id` comes back as a full Secret Reference, ready to paste into the other tools. **Bitwarden only:** the AWS Stores deliberately do not enumerate, because `ssm:DescribeParameters` and `secretsmanager:ListSecrets` have no resource-level IAM form and would force an account-wide grant ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)). AWS references are self-describing names, so nothing is lost. |
+| `http_request({ url, method?, secret_refs, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
+| `run_with_secret({ argv, secret_refs, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the `#subkey`, else the Bitwarden key name, else the last path segment of an AWS name; override per reference with `env_overrides`). Every Store credential is stripped from the child's environment, so the command can never reach a Store directly. Returns the child's stdout, stderr, and exit code. No allowlist — the Approval prompt shows `argv` (shell-quoted for a faithful, readable display), each reference with its resolved name (never the value), and the injected env-var name, and the human approves. |
 
-Reference secrets by **UUID** (get one from `list_secrets`).
+Reference secrets by **Secret Reference** — `bws:<uuid>` (get one from `list_secrets`), `ssm:/path/to/param`, or `secretsmanager:<name>[#field]`.
 
 `http_request`/`run_with_secret` also return `structuredContent` matching a
 declared `outputSchema`: `{ status: "approval_required" | "ok" | "error", approve_url?, reason?, ... }`
@@ -74,7 +100,7 @@ Touch ID once → the agent re-issues the identical call → it succeeds.
   "tool": "http_request",
   "arguments": {
     "url": "https://api.stripe.com/v1/charges/ch_123",
-    "secret_ids": ["<stripe-secret-key-id>"]
+    "secret_refs": ["bws:<stripe-secret-key-id>"]
   }
 }
 ```
@@ -94,32 +120,48 @@ an env var, never as a CLI flag (which would leak it into `ps`/shell history):
   "tool": "run_with_secret",
   "arguments": {
     "argv": ["psql", "-h", "db.internal", "-U", "app", "-c", "select count(*) from orders;"],
-    "secret_ids": ["<db-password-secret-id>"],
-    "env_overrides": { "<db-password-secret-id>": "PGPASSWORD" }
+    "secret_refs": ["bws:<db-password-secret-id>"],
+    "env_overrides": { "bws:<db-password-secret-id>": "PGPASSWORD" }
   }
 }
 ```
 
 `psql` reads `PGPASSWORD` from its environment automatically.
 
-### Run a cloud CLI with temporary credentials
+### Use a parameter straight out of SSM
 
-"Deploy the staging Lambda" — inject AWS credentials for one `aws` invocation
-without ever exporting them into your shell:
+"Run the migration against staging" — the password lives in Parameter Store and
+the reference is its own name, so nothing has to be looked up first:
 
 ```json
 {
   "tool": "run_with_secret",
   "arguments": {
-    "argv": ["aws", "lambda", "update-function-code", "--function-name", "staging-api", "--zip-file", "fileb://dist.zip"],
-    "secret_ids": ["<aws-key-id-secret>", "<aws-secret-key-secret>"],
-    "env_overrides": {
-      "<aws-key-id-secret>": "AWS_ACCESS_KEY_ID",
-      "<aws-secret-key-secret>": "AWS_SECRET_ACCESS_KEY"
-    }
+    "argv": ["psql", "-h", "staging.internal", "-U", "app", "-c", "select 1"],
+    "secret_refs": ["ssm:/staging/app/DB_PASSWORD"],
+    "env_overrides": { "ssm:/staging/app/DB_PASSWORD": "PGPASSWORD" }
   }
 }
 ```
+
+Or pull one field out of a JSON secret in Secrets Manager with `#`:
+
+```json
+{
+  "tool": "run_with_secret",
+  "arguments": {
+    "argv": ["psql", "-h", "staging.internal", "-U", "app", "-c", "select 1"],
+    "secret_refs": ["secretsmanager:staging/db#password"],
+    "env_overrides": { "secretsmanager:staging/db#password": "PGPASSWORD" }
+  }
+}
+```
+
+> **Don't** store a long-lived AWS access key as a secret and inject it into an
+> `aws` command. That credential reads a whole Store, so one waved-through
+> Approval ungates every parameter behind it, permanently — which is exactly
+> why no Store is allowed to bootstrap another's credential
+> ([ADR 0009](./docs/adr/0009-aws-credentials-not-ambient-not-from-a-store.md)).
 
 ### Trigger an internal webhook
 
@@ -132,7 +174,7 @@ that one internal host:
   "arguments": {
     "url": "https://internal.example.com/api/sync/trigger",
     "method": "POST",
-    "secret_ids": ["<webhook-token-id>"]
+    "secret_refs": ["bws:<webhook-token-id>"]
   }
 }
 ```
@@ -159,7 +201,7 @@ never returns a value:
 Published on npm — no clone needed:
 
 ```bash
-BWS_ACCESS_TOKEN=... npx -y @ivaisoft/bws-webauthn-mcp register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
+BWS_ACCESS_TOKEN=... npx -y @ivaisoft/secrets-webauthn-mcp register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
 ```
 
 Or from a local clone (for development):
@@ -171,24 +213,33 @@ BWS_ACCESS_TOKEN=... npm run register
 ```
 
 Credentials are stored as an **array** at
-`~/.config/bws-webauthn-mcp/credentials.json` (public key + counter + transports
+`~/.config/secrets-webauthn-mcp/credentials.json` (public key + counter + transports
 only, mode `0600` — no secret material). Any registered credential can Approve
 (e.g. Touch ID on the Mac plus a Google/Android passkey). The first credential is
 trust-on-first-use; adding further credentials requires an existing Approval.
 Serve mode does **not** serve registration.
 
 The host allowlist for `http_request` lives at
-`~/.config/bws-webauthn-mcp/allowlist.json`, mapping each `secret_id` to the hosts
-it may be sent to (missing entry = deny):
+`~/.config/secrets-webauthn-mcp/allowlist.json`, mapping each **Secret Reference**
+to the hosts it may be sent to (missing entry = deny):
 
 ```json
-{ "1234-secret-uuid": ["api.example.com"] }
+{
+  "bws:1234-secret-uuid": ["api.example.com"],
+  "ssm:/prod/app/STRIPE_KEY": ["api.stripe.com"]
+}
 ```
+
+Keys are references exactly as written in a tool call, so an entry grants hosts
+to one secret in one Store — never to a bare id two Stores might both claim.
 
 ## Wire into Claude Code
 
 ```bash
-claude mcp add bws -- env BWS_ACCESS_TOKEN=<token> BWS_ORGANIZATION_ID=<org-id> npx -y @ivaisoft/bws-webauthn-mcp
+claude mcp add secrets -- env BWS_ACCESS_TOKEN=<token> BWS_ORGANIZATION_ID=<org-id> npx -y @ivaisoft/secrets-webauthn-mcp
+
+# or AWS-only, no Bitwarden at all:
+claude mcp add secrets -- env AWS_REGION=us-east-1 AWS_ACCESS_KEY_ID=<id> AWS_SECRET_ACCESS_KEY=<key> npx -y @ivaisoft/secrets-webauthn-mcp
 ```
 
 or in `~/.claude/settings.json`:
@@ -198,7 +249,7 @@ or in `~/.claude/settings.json`:
   "mcpServers": {
     "bws": {
       "command": "npx",
-      "args": ["-y", "@ivaisoft/bws-webauthn-mcp"],
+      "args": ["-y", "@ivaisoft/secrets-webauthn-mcp"],
       "env": { "BWS_ACCESS_TOKEN": "<token>", "BWS_ORGANIZATION_ID": "<org-id>" }
     }
   }
@@ -206,7 +257,7 @@ or in `~/.claude/settings.json`:
 ```
 
 From a local clone instead, replace `command`/`args` with
-`"node"` / `["/path/to/bws-webauthn-mcp/dist/index.js", "serve"]`.
+`"node"` / `["/path/to/secrets-webauthn-mcp/dist/index.js", "serve"]`.
 
 The approval server binds an **auto-picked free port** on `127.0.0.1`; the
 approval URL uses it. There is no fixed port to configure.
@@ -218,7 +269,7 @@ take it as-is. In Postman, add an **MCP request** (**+** icon → **MCP** in the
 sidebar), pick **STDIO**, and either enter the command directly:
 
 ```
-npx -y @ivaisoft/bws-webauthn-mcp
+npx -y @ivaisoft/secrets-webauthn-mcp
 ```
 
 …or paste the JSON config. Use Postman **variables** rather than literal
@@ -228,9 +279,9 @@ access token is stored in plain text in a collection you might share:
 ```json
 {
   "mcpServers": {
-    "bws-webauthn-mcp": {
+    "secrets-webauthn-mcp": {
       "command": "npx",
-      "args": ["-y", "@ivaisoft/bws-webauthn-mcp"],
+      "args": ["-y", "@ivaisoft/secrets-webauthn-mcp"],
       "env": {
         "BWS_ACCESS_TOKEN": "{{bws_access_token}}",
         "BWS_ORGANIZATION_ID": "{{bws_organization_id}}"
@@ -254,7 +305,7 @@ if your client does, use STDIO instead.
 
 stdio is the default and is the more restrictive option — only the process a
 client directly spawns can talk to it. `serve --http` instead runs the MCP
-session over Streamable HTTP on `127.0.0.1:BWS_HTTP_PORT` (default `8787`), so
+session over Streamable HTTP on `127.0.0.1:SECRETS_HTTP_PORT` (default `8787`), so
 more than one local MCP client can share a single running server:
 
 ```bash
@@ -281,11 +332,46 @@ vault token's confinement to this process are identical to stdio mode.
 
 | Var | Default | |
 |---|---|---|
-| `BWS_ACCESS_TOKEN` | — | **required**, machine-account token |
-| `BWS_ORGANIZATION_ID` | — | **required**, used by `list_secrets` (a machine account belongs to exactly one org) |
+| `BWS_ACCESS_TOKEN` | — | machine-account token; **enables the Bitwarden Store** |
+| `BWS_ORGANIZATION_ID` | — | required **iff** `BWS_ACCESS_TOKEN` is set (a machine account belongs to exactly one org) |
 | `BWS_API_URL` / `BWS_IDENTITY_URL` | bitwarden.com | set for EU / self-host |
-| `BWS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
-| `BWS_HTTP_PORT` | `8787` | only read by `serve --http` |
+| `AWS_REGION` | — | **enables the AWS Stores** |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | — | static-keys mode |
+| `AWS_SSO_START_URL` / `AWS_SSO_REGION` / `AWS_SSO_ACCOUNT_ID` / `AWS_SSO_ROLE_NAME` | — | SSO device-flow mode — all four together, or none |
+| `SECRETS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
+| `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
+
+At least one Store must be configured or startup fails. Setting `AWS_REGION`
+without an AWS credential is an error too — never a silent fall-through to
+`~/.aws`, which is the whole point of ADR 0009.
+
+Give the AWS credential the smallest policy that works: `ssm:GetParameter` and
+`secretsmanager:GetSecretValue` on an ARN **prefix**, plus `kms:Decrypt` for the
+key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
+`Resource: "*"` — this server never calls them.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt"],
+      "Resource": "arn:aws:kms:us-east-1:123456789012:key/<key-id>"
+    }
+  ]
+}
+```
 
 ## What this does and does not protect
 
@@ -307,7 +393,7 @@ vault token's confinement to this process are identical to stdio mode.
 ## Audit log
 
 Every `http_request`/`run_with_secret` attempt appends one JSONL line to
-`~/.config/bws-webauthn-mcp/audit.log` (`{ ts, tool, secret_ids, host|argv0,
+`~/.config/secrets-webauthn-mcp/audit.log` (`{ ts, tool, secret_refs, host|argv0,
 verified }`) — never the value. `list_secrets` calls are not audited: it never
 touches a specific secret's value, so there's no "use" to record.
 

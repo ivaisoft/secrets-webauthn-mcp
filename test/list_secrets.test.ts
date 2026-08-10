@@ -1,14 +1,20 @@
 // Security-behaviour test for the list_secrets tool. No framework, no network:
-// bws is a fake whose listSecrets() deliberately returns EXTRA fields (value,
-// projectId, note) beyond {id, key} — exactly what the real Bitwarden API can
-// include in secret objects (the user confirmed `bws secret list` shows value
-// inline) — to prove the tool itself never forwards more than {id, key}, even
-// if a future SDK version or a differently-shaped BwsGateway starts including
-// more. Also locks that this tool, unlike http_request/run_with_secret, never
-// touches the Gate: it's metadata-only discovery, not secret use.
+// the Bitwarden Store is a fake whose listSecrets() deliberately returns EXTRA
+// fields (value, projectId, note) beyond {id, key} — exactly what the real
+// Bitwarden API can include in secret objects (the user confirmed `bws secret
+// list` shows value inline) — to prove the tool itself never forwards more than
+// {id, key}, even if a future SDK version or a differently-shaped Store starts
+// including more. Also locks that this tool, unlike http_request/run_with_secret,
+// never touches the Gate: it's metadata-only discovery, not secret use.
+//
+// The registry is the REAL createStoreRegistry, not a stub, so this also covers
+// the two properties that only exist once there is more than one Store: ids come
+// back as full Secret References, and a Store that cannot enumerate (the AWS
+// ones, ADR 0010) contributes nothing instead of erroring.
 import assert from "node:assert/strict";
 
 const { registerTools } = await import("../src/tools.js");
+const { createStoreRegistry } = await import("../src/store.js");
 
 const handlers: Record<string, (a: unknown) => Promise<any>> = {};
 const fakeMcp = {
@@ -26,7 +32,7 @@ const fakeGate = { checkApproval: () => { approvals++; return true; } } as any;
 // strip these before they ever reach tools.ts, but this test doesn't trust
 // that boundary either: it asserts the TOOL's own output, end to end.
 const SECRET_VALUE = "LIST-SECRETS-MUST-NEVER-LEAK-THIS";
-const fakeBws = {
+const fakeBwsStore = {
   getSecret: async () => { throw new Error("list_secrets must not call getSecret"); },
   listSecrets: async () => [
     {
@@ -40,7 +46,13 @@ const fakeBws = {
   ],
 } as any;
 
-registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });
+// No listSecrets at all — the shape the SSM / Secrets Manager Stores really have.
+const fakeSsmStore = {
+  getSecret: async () => { throw new Error("list_secrets must not call getSecret"); },
+} as any;
+
+const stores = createStoreRegistry({ bws: fakeBwsStore, ssm: fakeSsmStore });
+registerTools({ mcp: fakeMcp, gate: fakeGate, stores, timeoutMs: 1000 });
 const listSecrets = handlers["list_secrets"]!;
 
 let passed = 0, failed = 0;
@@ -55,13 +67,30 @@ await test("returns only {id, key} — value/projectId/note never leak even when
   const text = result.content[0].text as string;
   const parsed = JSON.parse(text);
   assert.deepEqual(parsed, [
-    { id: "00000000-0000-0000-0000-000000000001", key: "EXAMPLE_USERNAME" },
-    { id: "s2", key: "OTHER_KEY" },
+    { id: "bws:00000000-0000-0000-0000-000000000001", key: "EXAMPLE_USERNAME" },
+    { id: "bws:s2", key: "OTHER_KEY" },
   ]);
   assert.ok(!text.includes(SECRET_VALUE), "the secret value must never appear in list_secrets output");
   assert.ok(!text.includes("also-secret"));
   assert.ok(!text.includes("projectId"), "only id/key fields — no incidental extra metadata");
   assert.equal(approvals, before, "list_secrets must never require a Gate Approval");
+});
+
+await test("ids come back as full Secret References, ready to paste into secret_refs", async () => {
+  const parsed = JSON.parse((await listSecrets({})).content[0].text as string);
+  assert.ok(
+    parsed.every((s: { id: string }) => s.id.startsWith("bws:")),
+    "a bare id would be rejected by the tools, so listing must return the prefixed form",
+  );
+});
+
+await test("a Store that cannot enumerate contributes nothing, and does not error", async () => {
+  const parsed = JSON.parse((await listSecrets({})).content[0].text as string);
+  assert.equal(
+    parsed.some((s: { id: string }) => s.id.startsWith("ssm:")),
+    false,
+    "the AWS Stores deliberately do not enumerate (ADR 0010)",
+  );
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

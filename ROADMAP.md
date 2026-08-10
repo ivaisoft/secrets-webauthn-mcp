@@ -30,6 +30,15 @@ reasoning behind what's already here before assuming a "should" below is easy.
 - **Multi-organization `list_secrets`.** Currently one `BWS_ORGANIZATION_ID`
   per server instance; a machine account scoped to multiple orgs would need
   this to accept an org id per call.
+- **Multi-region / multi-account AWS.** One `AWS_REGION` per server instance,
+  the same shape of limit as the single org above. A reference would have to
+  carry the region (`ssm:us-east-1:/prod/…`), which lengthens the string a
+  human reads at the Gate — worth doing only when there is a real second region.
+- **AWS SSO re-login without a restart.** The device flow runs once at startup
+  and the credential lives in memory; when the session expires, AWS Store calls
+  fail with "restart the server". Re-running the flow in place would mean
+  surfacing a new verification code mid-session — the Gate's own port is the
+  obvious place, but it is a second interactive flow to maintain.
 
 ## Explicitly not planned (by design, not oversight)
 

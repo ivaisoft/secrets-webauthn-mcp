@@ -1,8 +1,8 @@
 {
-  "name": "@ivaisoft/bws-webauthn-mcp",
+  "name": "@ivaisoft/secrets-webauthn-mcp",
   "version": "2.2.0",
   "type": "module",
-  "description": "MCP server for Bitwarden Secrets Manager: the agent USES secrets it never sees, and every use is gated by a fresh physical WebAuthn Approval (Touch ID / passkey).",
+  "description": "MCP server for Bitwarden Secrets Manager, AWS SSM Parameter Store and AWS Secrets Manager: the agent USES secrets it never sees, and every use is gated by a fresh physical WebAuthn Approval (Touch ID / passkey).",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,7 +13,7 @@
     "url": "https://github.com/ivaisoft/bws-webauthn-mcp/issues"
   },
   "bin": {
-    "bws-webauthn-mcp": "dist/index.js"
+    "secrets-webauthn-mcp": "dist/index.js"
   },
   "files": [
     "dist",
@@ -34,6 +34,10 @@
     "test": "tsx test/highlight.test.ts && tsx test/list_secrets.test.ts && tsx test/http_request.test.ts && tsx test/run_with_secret.test.ts && tsx test/http_transport.test.ts && tsx test/build-artifact.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1106.0",
+    "@aws-sdk/client-ssm": "^3.1106.0",
+    "@aws-sdk/client-sso": "^3.1106.0",
+    "@aws-sdk/client-sso-oidc": "^3.1106.0",
     "@bitwarden/sdk-napi": "^1.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@simplewebauthn/browser": "^13.3.0",

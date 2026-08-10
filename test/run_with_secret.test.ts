@@ -24,11 +24,15 @@ import assert from "node:assert/strict";
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "bws-webauthn-run-test-"));
 process.env.HOME = SANDBOX;
-const CFG = join(SANDBOX, ".config", "bws-webauthn-mcp");
+const CFG = join(SANDBOX, ".config", "secrets-webauthn-mcp");
 mkdirSync(CFG, { recursive: true });
 process.env.BWS_ACCESS_TOKEN = "VAULT-TOKEN-SENTINEL"; // must NOT reach the child
+process.env.AWS_ACCESS_KEY_ID = "AKIA-SENTINEL"; // ditto: a Store credential
+process.env.AWS_SECRET_ACCESS_KEY = "AWS-SECRET-SENTINEL";
+process.env.AWS_SESSION_TOKEN = "AWS-SESSION-SENTINEL";
 
 const { registerTools } = await import("../src/tools.js");
+const { createStoreRegistry } = await import("../src/store.js");
 const { RunWithSecretArgsSchema } = await import("../src/schemas.js");
 const { requestKey } = await import("../src/request-key.js");
 
@@ -37,6 +41,7 @@ const SECRET = "RUN-SECRET-DO-NOT-LEAK-xyz789";
 
 let events: string[] = [];
 let secretMap: Record<string, { key: string; value: string }> = {};
+let ssmMap: Record<string, string> = {};
 const handlers: Record<string, (a: unknown) => Promise<any>> = {};
 const fakeMcp = {
   server: {},
@@ -68,7 +73,7 @@ function makeFakeGate() {
 }
 const fakeGate = makeFakeGate();
 
-const fakeBws = {
+const fakeBwsStore = {
   getSecret: async (id: string) => {
     events.push("getSecret:" + id);
     const s = secretMap[id];
@@ -80,7 +85,20 @@ const fakeBws = {
   listSecrets: async () => Object.entries(secretMap).map(([id, s]) => ({ id, key: s.key })),
 } as any;
 
-registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });
+// A second Store, so the reference routing and the "which Store is this from"
+// half of the Approval message are exercised, not just assumed.
+const fakeSsmStore = {
+  getSecret: async (id: string) => {
+    events.push("ssm:getSecret:" + id);
+    const s = ssmMap[id];
+    if (!s) throw new Error("no such parameter " + id);
+    return { key: id.slice(id.lastIndexOf("/") + 1), value: s };
+  },
+} as any;
+
+// The REAL registry, so reference routing and #subkey extraction are covered.
+const stores = createStoreRegistry({ bws: fakeBwsStore, ssm: fakeSsmStore });
+registerTools({ mcp: fakeMcp, gate: fakeGate, stores, timeoutMs: 1000 });
 const run = (raw: unknown) => handlers["run_with_secret"]!(RunWithSecretArgsSchema.parse(raw));
 const keyFor = (raw: unknown) => requestKey("run_with_secret", RunWithSecretArgsSchema.parse(raw));
 const textOf = (r: any) => r.content[0].text as string;
@@ -100,7 +118,7 @@ async function test(name: string, fn: () => Promise<void>) {
 
 await test("first call (not yet approved) returns instructions + URL, never spawns", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const args = { argv: echo("process.env.API_KEY ?? 'UNSET'"), secret_ids: ["s1"] };
+  const args = { argv: echo("process.env.API_KEY ?? 'UNSET'"), secret_refs: ["bws:s1"] };
   const r = await run(args);
   assert.equal(r.isError, true);
   assert.match(textOf(r), /physical approval required/i);
@@ -114,7 +132,7 @@ await test("first call (not yet approved) returns instructions + URL, never spaw
 
 await test("formatting: the real Bitwarden key name is shown, and an ambiguous arg is quoted", async () => {
   secretMap = { s1: { key: "MY_SECRET_KEY", value: SECRET } };
-  const args = { argv: ["printf", "%s", "hello world"], secret_ids: ["s1"] };
+  const args = { argv: ["printf", "%s", "hello world"], secret_refs: ["bws:s1"] };
   const r = await run(args);
   assert.ok(textOf(r).includes("(MY_SECRET_KEY)"), "must show the real Bitwarden key name, not a placeholder");
   assert.ok(
@@ -126,7 +144,7 @@ await test("formatting: the real Bitwarden key name is shown, and an ambiguous a
 
 await test("formatting: a secret_id not found via list_secrets falls back honestly, not to a fake name", async () => {
   secretMap = {}; // "s1" is unknown to listSecrets (and to getSecret — but approval never gets that far)
-  const args = { argv: ["echo", "hi"], secret_ids: ["s1"] };
+  const args = { argv: ["echo", "hi"], secret_refs: ["bws:s1"] };
   const r = await run(args);
   assert.ok(textOf(r).includes("(not found via list_secrets)"));
   assert.ok(textOf(r).includes("<its Bitwarden key name>"));
@@ -134,7 +152,7 @@ await test("formatting: a secret_id not found via list_secrets falls back honest
 
 await test("approval is single-use: repeating the same call again is not yet approved", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const args = { argv: echo("'x'"), secret_ids: ["s1"] };
+  const args = { argv: echo("'x'"), secret_refs: ["bws:s1"] };
   fakeGate.preApprove(keyFor(args));
   await run(args); // consumes the approval
   const r2 = await run(args); // same args again, nothing pre-approved this time
@@ -144,7 +162,7 @@ await test("approval is single-use: repeating the same call again is not yet app
 
 await test("after approval: inject under the Bitwarden key name; child receives the value", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const args = { argv: echo("process.env.API_KEY ?? 'UNSET'"), secret_ids: ["s1"] };
+  const args = { argv: echo("process.env.API_KEY ?? 'UNSET'"), secret_refs: ["bws:s1"] };
   const r = await runApproved(args);
   assert.equal(r.isError, undefined);
   assert.match(textOf(r), /\[exit 0\]/);
@@ -158,30 +176,85 @@ await test("env_overrides renames the var; default name is unset", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
   const r = await runApproved({
     argv: echo("'C='+(process.env.CUSTOM_TOKEN ?? 'UNSET')+' A='+(process.env.API_KEY ?? 'UNSET')"),
-    secret_ids: ["s1"],
-    env_overrides: { s1: "CUSTOM_TOKEN" },
+    secret_refs: ["bws:s1"],
+    env_overrides: { "bws:s1": "CUSTOM_TOKEN" },
   });
   assert.ok(textOf(r).includes(`C=${SECRET}`), "secret must be under the override name");
   assert.ok(textOf(r).includes("A=UNSET"), "the default key name must not also be set");
 });
 
-await test("vault token is stripped from the child env", async () => {
+await test("every Store credential is stripped from the child env, not just Bitwarden's", async () => {
+  // The load-bearing one once there is more than one Store: a child that
+  // inherited AWS keys could read the whole Parameter Store with no Gate at
+  // all — the exact escalation ADR 0009 refused when it kept the Stores peers.
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const r = await runApproved({ argv: echo("'TOK='+(process.env.BWS_ACCESS_TOKEN ?? 'UNSET')"), secret_ids: ["s1"] });
+  const probe = [
+    "'TOK='+(process.env.BWS_ACCESS_TOKEN ?? 'UNSET')",
+    "'AK='+(process.env.AWS_ACCESS_KEY_ID ?? 'UNSET')",
+    "'SK='+(process.env.AWS_SECRET_ACCESS_KEY ?? 'UNSET')",
+    "'ST='+(process.env.AWS_SESSION_TOKEN ?? 'UNSET')",
+  ].join("+' '+");
+  const r = await runApproved({ argv: echo(probe), secret_refs: ["bws:s1"] });
   assert.match(textOf(r), /TOK=UNSET/, "BWS_ACCESS_TOKEN must not reach the child");
-  assert.ok(!textOf(r).includes("VAULT-TOKEN-SENTINEL"));
+  assert.match(textOf(r), /AK=UNSET/, "AWS_ACCESS_KEY_ID must not reach the child");
+  assert.match(textOf(r), /SK=UNSET/, "AWS_SECRET_ACCESS_KEY must not reach the child");
+  assert.match(textOf(r), /ST=UNSET/, "AWS_SESSION_TOKEN must not reach the child");
+  for (const sentinel of ["VAULT-TOKEN-SENTINEL", "AKIA-SENTINEL", "AWS-SECRET-SENTINEL", "AWS-SESSION-SENTINEL"]) {
+    assert.ok(!textOf(r).includes(sentinel), `${sentinel} leaked into the child`);
+  }
+});
+
+await test("an unprefixed secret_ref is rejected before Approval", async () => {
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  const r = await run({ argv: echo("'x'"), secret_refs: ["s1"] });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /no store prefix/i);
+  assert.match(textOf(r), /bws:s1/, "the error should suggest the fix");
+  assert.equal(events.includes("checkApproval"), false, "a malformed reference is a caller bug, not something to spend a touch on");
+});
+
+await test("an SSM reference injects under its last path segment", async () => {
+  secretMap = {};
+  ssmMap = { "/prod/app/STRIPE_KEY": SECRET };
+  const r = await runApproved({
+    argv: echo("'S='+(process.env.STRIPE_KEY ?? 'UNSET')"),
+    secret_refs: ["ssm:/prod/app/STRIPE_KEY"],
+  });
+  assert.ok(textOf(r).includes(`S=${SECRET}`), "default env name is the last path segment");
+});
+
+await test("#subkey selects one field of a JSON secret, and never echoes the blob", async () => {
+  secretMap = {};
+  ssmMap = { "/prod/db": JSON.stringify({ username: "app", password: SECRET }) };
+  const r = await runApproved({
+    argv: echo("'P='+(process.env.password ?? 'UNSET')+' U='+(process.env.username ?? 'UNSET')"),
+    secret_refs: ["ssm:/prod/db#password"],
+  });
+  assert.ok(textOf(r).includes(`P=${SECRET}`), "the selected field is injected under the subkey name");
+  assert.match(textOf(r), /U=UNSET/, "only the selected field is injected, not every field");
+});
+
+await test("#subkey on a non-JSON secret errors without echoing the value", async () => {
+  secretMap = {};
+  ssmMap = { "/prod/flat": SECRET };
+  const r = await runApproved({ argv: echo("'x'"), secret_refs: ["ssm:/prod/flat#password"] });
+  assert.equal(r.isError, true);
+  assert.match(textOf(r), /is not JSON/i);
+  // JSON.parse's own message quotes the input it choked on, which would put the
+  // secret straight into the tool result — store.ts must build its own message.
+  assert.ok(!textOf(r).includes(SECRET), "the failing value must never appear in the error");
 });
 
 await test("secret is never in argv, and not leaked when the child is quiet", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const r = await runApproved({ argv: echo("'ARGV:'+process.argv.slice(2).join(',')+';OUT:done'"), secret_ids: ["s1"] });
+  const r = await runApproved({ argv: echo("'ARGV:'+process.argv.slice(2).join(',')+';OUT:done'"), secret_refs: ["bws:s1"] });
   assert.match(textOf(r), /OUT:done/);
   assert.ok(!textOf(r).includes(SECRET), "secret must never appear in argv nor be leaked by the wrapper");
 });
 
 await test("env_overrides referencing an unknown secret_id is rejected before Approval", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  const args = { argv: echo("'x'"), secret_ids: ["s1"], env_overrides: { "typo-id": "SOME_NAME" } };
+  const args = { argv: echo("'x'"), secret_refs: ["bws:s1"], env_overrides: { "typo-id": "SOME_NAME" } };
   const r = await run(args); // no preApprove — must fail before even checking approval
   assert.equal(r.isError, true);
   assert.match(textOf(r), /env_overrides/i);
@@ -191,14 +264,14 @@ await test("env_overrides referencing an unknown secret_id is rejected before Ap
 
 await test("duplicate resolved env var name is refused", async () => {
   secretMap = { a: { key: "SAME", value: "v1" }, b: { key: "SAME", value: "v2" } };
-  const r = await runApproved({ argv: echo("'x'"), secret_ids: ["a", "b"] });
+  const r = await runApproved({ argv: echo("'x'"), secret_refs: ["bws:a", "bws:b"] });
   assert.equal(r.isError, true);
   assert.match(textOf(r), /same env var name/i);
 });
 
 await test("invalid env var name is refused", async () => {
   secretMap = { s1: { key: "bad name!", value: SECRET } };
-  const r = await runApproved({ argv: echo("'x'"), secret_ids: ["s1"] });
+  const r = await runApproved({ argv: echo("'x'"), secret_refs: ["bws:s1"] });
   assert.equal(r.isError, true);
   assert.match(textOf(r), /invalid/i);
   assert.ok(!textOf(r).includes(SECRET));
@@ -206,7 +279,7 @@ await test("invalid env var name is refused", async () => {
 
 await test("audit records the tool + argv0 but never the secret", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
-  await runApproved({ argv: echo("'x'"), secret_ids: ["s1"] });
+  await runApproved({ argv: echo("'x'"), secret_refs: ["bws:s1"] });
   const audit = readFileSync(join(CFG, "audit.log"), "utf8");
   assert.ok(audit.includes('"run_with_secret"'), "audit must record the tool");
   assert.ok(!audit.includes(SECRET), "audit log must never contain the secret value");

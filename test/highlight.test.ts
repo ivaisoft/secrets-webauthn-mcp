@@ -48,6 +48,18 @@ test("Injecting line: single secret — id meta, key/arrows fg, env var name dis
   assert.match(html, /<span class="tok-variable">\$test<\/span>/);
 });
 
+test("Injecting line: an AWS reference has no parenthetical name and is still decorated", () => {
+  // Only Bitwarden ids are opaque enough to need a resolved name shown beside
+  // them; an SSM path already IS the name. Without the optional group this
+  // would hit the ADR 0008 fallback and render every AWS reference as one flat
+  // line — correct, but the human loses the id/env-var distinction exactly
+  // where they're deciding whether to approve.
+  const html = highlightMessage("Injecting as env vars: ssm:/prod/app/STRIPE_KEY → $STRIPE_KEY");
+  assert.match(html, /<span class="tok-meta">ssm:\/prod\/app\/STRIPE_KEY<\/span>/);
+  assert.match(html, /<span class="tok-variable">\$STRIPE_KEY<\/span>/);
+  assert.ok(!html.includes("("), "no empty parenthetical when there is no resolved name");
+});
+
 test("Injecting line: two secrets — the comma separator survives between mappings", () => {
   const html = highlightMessage(
     "Injecting as env vars: id1 (key1) → $ENV1, id2 (key2) → $ENV2",
@@ -72,9 +84,9 @@ test("full multi-line run_with_secret message renders one code-line div per line
 test("SECURITY: a message with HTML-unsafe characters is always escaped, even inside matched capture groups", () => {
   const evil = 'http_request wants to use secret(s) [<script>x</script>] to call host "evil.com/\"><img src=x onerror=alert(1)>" (GET https://evil.com/x).';
   const html = highlightMessage(evil);
-  assert.ok(!html.includes("<script>"), "must never emit a raw <script> tag from the secret_ids capture group");
+  assert.ok(!html.includes("<script>"), "must never emit a raw <script> tag from the secret-reference capture group");
   assert.ok(!html.includes("<img "), "must never emit a raw <img> tag from the host capture group");
-  assert.ok(html.includes("&lt;script&gt;"), "the secret_ids fragment must be HTML-escaped");
+  assert.ok(html.includes("&lt;script&gt;"), "the secret-reference fragment must be HTML-escaped");
   assert.ok(html.includes("&lt;img"), "the host fragment must be HTML-escaped");
 });
 
