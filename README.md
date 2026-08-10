@@ -375,14 +375,31 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
 `Resource: "*"`. `GetParametersByPath` is only needed if you set `SSM_PATH_PREFIX`
 to enable listing, and it scopes to the same prefix you already grant reads on.
 
+Note the two ARNs on that statement. `GetParameter` authorizes against each
+individual parameter, which `parameter/prod/app/*` matches. `GetParametersByPath`
+authorizes against the **path**, whose ARN is `parameter/prod/app` — with no
+trailing segment, so `/*` alone does not match it and a policy carrying only the
+wildcard fails with `AccessDenied` on every list. Both forms are granted here
+because they cover the same subtree either way.
+
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "ReadParameters",
       "Effect": "Allow",
-      "Action": ["ssm:GetParameter", "ssm:GetParametersByPath"],
+      "Action": "ssm:GetParameter",
       "Resource": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/*"
+    },
+    {
+      "Sid": "ListUnderPrefix",
+      "Effect": "Allow",
+      "Action": "ssm:GetParametersByPath",
+      "Resource": [
+        "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app",
+        "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/*"
+      ]
     },
     {
       "Effect": "Allow",

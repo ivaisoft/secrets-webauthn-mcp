@@ -30,9 +30,11 @@ export interface SecretStore {
   getSecret(id: string): Promise<SecretHandle>;
   /**
    * Metadata only, never a value. Optional: a Store implements this only when
-   * it can enumerate within a least-privilege credential. The AWS Stores
-   * deliberately do not (ADR 0010) — listing there would force an account-wide
-   * IAM grant that reading N known parameters does not need.
+   * the permission to enumerate can be scoped no wider than the permission to
+   * read (ADR 0010). Bitwarden always can; SSM can, but only once a path prefix
+   * is configured, so it is optional at runtime rather than at compile time;
+   * AWS Secrets Manager never can, because ListSecrets has no resource-level
+   * IAM form.
    */
   listSecrets?(): Promise<SecretIdentifier[]>;
 }
@@ -46,8 +48,36 @@ export interface StoreRegistry {
   enumerable: StoreName[];
   /** Resolve a reference to its value, including `#subkey` extraction. */
   get(ref: SecretRef): Promise<SecretHandle>;
-  /** Every enumerable Store's contents, as full Secret References. */
-  list(): Promise<SecretIdentifier[]>;
+  /** Every enumerable Store's contents, as full Secret References, plus which
+   *  Stores failed — never a partial list passed off as complete. */
+  list(): Promise<StoreListing>;
+}
+
+export interface StoreListing {
+  secrets: SecretIdentifier[];
+  /** Stores that were asked and failed. Kept separate from the results so the
+   *  caller can say "SSM errored" instead of silently returning a short list
+   *  that reads as "this is everything". */
+  failures: { store: StoreName; reason: string }[];
+}
+
+/**
+ * A failing Store's reason, reduced to its error name.
+ *
+ * The full AWS message embeds the calling principal's ARN, and this string is
+ * handed to the agent. `AccessDeniedException` is the whole diagnosis anyway —
+ * the expected state for anyone who set a path prefix before adding
+ * GetParametersByPath to their IAM policy.
+ */
+function failureReason(err: unknown): string {
+  if (err && typeof err === "object" && "name" in err) {
+    const name = String((err as { name: unknown }).name);
+    if (name === "AccessDeniedException") {
+      return "AccessDeniedException — the credential lacks ssm:GetParametersByPath on that path prefix";
+    }
+    if (name.length > 0 && name !== "Error") return name;
+  }
+  return err instanceof Error ? err.message : "unknown error";
 }
 
 /**
@@ -107,17 +137,25 @@ export function createStoreRegistry(stores: Partial<Record<StoreName, SecretStor
       return ref.subkey === undefined ? handle : selectSubkey(handle, ref, ref.subkey);
     },
 
-    async list(): Promise<SecretIdentifier[]> {
-      const out: SecretIdentifier[] = [];
+    async list(): Promise<StoreListing> {
+      const secrets: SecretIdentifier[] = [];
+      const failures: StoreListing["failures"] = [];
       for (const name of configured) {
         const store = stores[name];
         if (!store?.listSecrets) continue;
-        const items = await store.listSecrets();
-        // Return full Secret References, not bare store-local ids: what
-        // list_secrets hands back must be directly pasteable into secret_refs.
-        for (const item of items) out.push({ id: `${name}:${item.id}`, key: item.key });
+        try {
+          const items = await store.listSecrets();
+          // Return full Secret References, not bare store-local ids: what
+          // list_secrets hands back must be directly pasteable into secret_refs.
+          for (const item of items) secrets.push({ id: `${name}:${item.id}`, key: item.key });
+        } catch (err) {
+          // One Store failing must not discard another's results. An SSM
+          // AccessDenied is the expected state before the IAM policy is
+          // updated, and it should not take Bitwarden's list down with it.
+          failures.push({ store: name, reason: failureReason(err) });
+        }
       }
-      return out;
+      return { secrets, failures };
     },
   };
 }

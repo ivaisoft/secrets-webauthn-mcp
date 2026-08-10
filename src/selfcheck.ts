@@ -10,7 +10,7 @@ import { isAllowedRequest } from "./http-guard.js";
 import { requestKey } from "./request-key.js";
 import { lastPathSegment, parseSecretRef } from "./secret-ref.js";
 import { formatArgv } from "./shell-format.js";
-import type { Allowlist } from "./schemas.js";
+import { AwsEnvSchema, type Allowlist } from "./schemas.js";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`selfcheck failed: ${message}`);
@@ -194,6 +194,26 @@ export function runSelfcheck(): void {
   assert(
     exhausted.decision.approved && !exhausted.decision.reused && exhausted.spend,
     "exhausted window: time left does not matter, it falls back to single-use",
+  );
+
+  // 10. SSM_PATH_PREFIX must be a real path. A bare "/" would pass a
+  // leading-slash-only check and produce the account-wide sweep this option
+  // exists to prevent, so the guard has to be enforced, not documented.
+  assert(
+    AwsEnvSchema.safeParse({ SSM_PATH_PREFIX: "/prod/app" }).success,
+    "a real path prefix is accepted",
+  );
+  assert(
+    !AwsEnvSchema.safeParse({ SSM_PATH_PREFIX: "/" }).success,
+    '"/" is rejected — it would enumerate the whole account',
+  );
+  assert(
+    !AwsEnvSchema.safeParse({ SSM_PATH_PREFIX: "//" }).success,
+    '"//" is rejected for the same reason',
+  );
+  assert(
+    !AwsEnvSchema.safeParse({ SSM_PATH_PREFIX: "prod/app" }).success,
+    "a prefix without a leading slash is rejected",
   );
 
   process.stdout.write("selfcheck ok\n");
