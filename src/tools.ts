@@ -247,16 +247,18 @@ export function registerTools(ctx: ToolContext): void {
         `http_request wants to use secret(s) [${raws.join(", ")}] ` +
         `to call host "${host}" (${args.method} ${args.url}).`;
       const key = requestKey("http_request", args);
-      if (!gate.checkApproval(key, message, timeoutMs)) {
+      const decision = gate.checkApproval(key, message, timeoutMs);
+      if (!decision.approved) {
         appendAudit({ tool: "http_request", secret_refs: raws, host, verified: false });
         return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);
       }
+      const reused = decision.reused;
 
       let handles: SecretHandle[];
       try {
         handles = await Promise.all(refs.map((ref) => stores.get(ref)));
       } catch (e) {
-        appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true });
+        appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true, reused });
         return errorResult(errorMessage(e));
       }
 
@@ -276,7 +278,7 @@ export function registerTools(ctx: ToolContext): void {
         ...(args.body !== undefined ? { body: args.body } : {}),
       });
       if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
-        appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true });
+        appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true, reused });
         return errorResult(
           `Refusing to follow a redirect from ${host}: following it could forward the ` +
             `injected secret to a host outside the allowlist. Re-issue http_request against ` +
@@ -284,7 +286,7 @@ export function registerTools(ctx: ToolContext): void {
         );
       }
       const text = await response.text();
-      appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true });
+      appendAudit({ tool: "http_request", secret_refs: raws, host, verified: true, reused });
       return httpOk(response.status, text);
     },
   );
@@ -353,16 +355,18 @@ export function registerTools(ctx: ToolContext): void {
         `run_with_secret wants to run (no shell):\n  ${formatArgv(args.argv)}\n` +
         `Injecting as env vars: ${envDisplay}`;
       const key = requestKey("run_with_secret", args);
-      if (!gate.checkApproval(key, message, timeoutMs)) {
+      const decision = gate.checkApproval(key, message, timeoutMs);
+      if (!decision.approved) {
         appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: false });
         return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);
       }
+      const reused = decision.reused;
 
       let handles: SecretHandle[];
       try {
         handles = await Promise.all(refs.map((ref) => stores.get(ref)));
       } catch (e) {
-        appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: true });
+        appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: true, reused });
         return errorResult(errorMessage(e));
       }
 
@@ -413,7 +417,7 @@ export function registerTools(ctx: ToolContext): void {
         return { stdout: "", stderr: `failed to run "${argv0}": ${code}`, code: 127 as number | null };
       });
 
-      appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: true });
+      appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: true, reused });
       return runOk(result.code, result.stdout, result.stderr);
     },
   );

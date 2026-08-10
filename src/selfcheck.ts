@@ -4,6 +4,7 @@
 import { checkHostAllowed } from "./allowlist.js";
 import { base64ToPublicKey, publicKeyToBase64 } from "./credentials.js";
 import { resolveEnvName } from "./envname.js";
+import { decideVerified } from "./gate.js";
 import { escapeHtml } from "./html.js";
 import { isAllowedRequest } from "./http-guard.js";
 import { requestKey } from "./request-key.js";
@@ -160,6 +161,40 @@ export function runSelfcheck(): void {
 
   assert(lastPathSegment("/prod/app/STRIPE_KEY") === "STRIPE_KEY", "default env name is the last path segment");
   assert(lastPathSegment("FLAT_NAME") === "FLAT_NAME", "a non-hierarchical name is its own segment");
+
+  // 9. Reuse windows (ADR 0011): bounded by time AND by remaining runs, and
+  // running out of either ends the grant. This is the rule that keeps a window
+  // from being a blank cheque, so it is asserted directly rather than inferred.
+  const NOW = 1_000_000;
+  const noGrant = decideVerified(undefined, NOW);
+  assert(
+    noGrant.decision.approved && !noGrant.decision.reused && noGrant.spend,
+    "no window: approved once, marked as a real touch, entry consumed",
+  );
+
+  const live = decideVerified({ until: NOW + 60_000, remaining: 3 }, NOW);
+  assert(
+    live.decision.approved && live.decision.reused && !live.spend,
+    "live window: approved, marked reused, entry kept for the remaining runs",
+  );
+
+  const lastRun = decideVerified({ until: NOW + 60_000, remaining: 1 }, NOW);
+  assert(
+    lastRun.decision.reused && lastRun.spend,
+    "final run of a window consumes the entry — the grant ends with its last use",
+  );
+
+  const timedOut = decideVerified({ until: NOW - 1, remaining: 99 }, NOW);
+  assert(
+    timedOut.decision.approved && !timedOut.decision.reused && timedOut.spend,
+    "expired window: runs left do not matter, it falls back to single-use",
+  );
+
+  const exhausted = decideVerified({ until: NOW + 60_000, remaining: 0 }, NOW);
+  assert(
+    exhausted.decision.approved && !exhausted.decision.reused && exhausted.spend,
+    "exhausted window: time left does not matter, it falls back to single-use",
+  );
 
   process.stdout.write("selfcheck ok\n");
 }

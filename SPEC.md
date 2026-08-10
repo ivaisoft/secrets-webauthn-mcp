@@ -66,8 +66,9 @@ server restart.
 
 ## Tools
 
-`http_request` and `run_with_secret` **require a fresh Approval** — no cache,
-ever (ADR 0002). Both accept a **list** of `secret_refs` (one touch authorizes
+`http_request` and `run_with_secret` **require a fresh Approval** — no cache
+(ADR 0002), except for an opt-in **Reuse Window** covering one byte-identical
+request, bounded by time and run count and off by default (ADR 0011). Both accept a **list** of `secret_refs` (one touch authorizes
 the set, which may span Stores). Secret values are never returned to the agent.
 `list_secrets` is the exception: it returns no value and is deliberately ungated
 (ADR 0005).
@@ -117,6 +118,7 @@ forever waiting on it). Instead:
 - `rpID = "localhost"`, `expectedOrigin = "http://localhost:<port>"`, `userVerification: "required"`.
 - Pending entries are swept on every check; unapproved ones expire after `ttlMs` (`SECRETS_GATE_TIMEOUT_MS`).
 - **One Approval is one assertion.** Dual / M-of-N Approval was considered and dropped — it only ever guarded a Store bootstrapping another's credential, which ADR 0009 removed.
+- **Reuse Window (ADR 0011):** at the Gate the human may grant the byte-identical request a window, bounded by elapsed time *and* remaining runs — whichever ends first. Keyed on the request key, so no other call is covered. Needs two opt-ins: `SECRETS_REUSE_MAX_MS` in config, and a duration chosen on the approve page. `decideVerified` holds the rule and `selfcheck` asserts it. Audited as `reused: true`.
 
 ## Credentials (multi-authenticator)
 
@@ -127,7 +129,7 @@ forever waiting on it). Instead:
 
 ## Cross-cutting
 
-- **Audit log:** append-only JSONL at `~/.config/secrets-webauthn-mcp/audit.log` — `{ ts, tool, secret_refs, host|argv0, verified }`. Never the value; references are recorded as written, so the trail says which Store each value came from.
+- **Audit log:** append-only JSONL at `~/.config/secrets-webauthn-mcp/audit.log` — `{ ts, tool, secret_refs, host|argv0, verified, reused }`. Never the value; references are recorded as written, so the trail says which Store each value came from.
 - **Port:** auto-pick a free port on `127.0.0.1`; the approval URL uses it.
 - **Credential scope:** README instructs a dedicated **read-only** Bitwarden machine account scoped to a single project, and an AWS policy scoped to an ARN prefix with no account-wide grant.
 
@@ -147,6 +149,8 @@ AWS Stores, `SECRETS_*` the server itself.
 | `SSM_PATH_PREFIX` | — | enables Parameter Store listing, scoped to this path |
 | `SECRETS_GATE_TIMEOUT_MS` | `120000` | pending-approval TTL (ADR 0006) |
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
+| `SECRETS_REUSE_MAX_MS` | `0` (off) | longest Reuse Window grantable at the Gate (ADR 0011) |
+| `SECRETS_REUSE_MAX_USES` | `5` | most runs one Reuse Window may cover |
 
 At least one Store must be configured, or startup fails.
 

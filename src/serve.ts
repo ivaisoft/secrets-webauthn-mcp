@@ -14,7 +14,10 @@ export async function runServe(): Promise<void> {
   // stdout carries the MCP protocol — every human-facing line goes to stderr.
   const log = (line: string): void => void process.stderr.write(`${line}\n`);
 
-  const gate = await startGate();
+  const gate = await startGate({
+    reuseMaxMs: env.SECRETS_REUSE_MAX_MS,
+    reuseMaxUses: env.SECRETS_REUSE_MAX_USES,
+  });
   const stores = await connectStores(env, log);
 
   const mcp = new McpServer({ name: "secrets-webauthn-mcp", version: VERSION });

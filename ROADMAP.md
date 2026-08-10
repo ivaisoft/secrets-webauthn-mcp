@@ -43,7 +43,10 @@ reasoning behind what's already here before assuming a "should" below is easy.
 ## Explicitly not planned (by design, not oversight)
 
 - **No cache, no standing pre-approval.** ADR 0002 exists precisely because
-  this was considered and rejected for the threat model.
+  this was considered and rejected for the threat model. A **Reuse Window**
+  (ADR 0011) is not that: it covers one byte-identical request, bounded by time
+  and by run count, and is off unless enabled in config *and* chosen at the
+  Gate. A window keyed on a secret rather than a request stays rejected.
 - **No way to bypass the Gate for automation/CI.** The physical Approval is
   the point; a headless bypass would undo it.
 - **No dual / M-of-N Approval.** Raised while designing multi-Store support,
