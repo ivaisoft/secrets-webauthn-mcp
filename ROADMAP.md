@@ -12,7 +12,7 @@ reasoning behind what's already here before assuming a "should" below is easy.
   currently runs on `macos-latest` for this reason (see
   [ADR 0003](./docs/adr/0003-local-stdio-only-not-clustered.md)). Widening
   this needs confirming the native binding actually resolves elsewhere first.
-- **`doctor` command.** A `bws-webauthn-mcp doctor` that checks common
+- **`doctor` command.** A `secrets-webauthn-mcp doctor` that checks common
   misconfiguration up front: missing `BWS_ORGANIZATION_ID`, an empty
   `allowlist.json`, no registered credentials, or — the one that actually bit
   us — a browser/OS routing WebAuthn "platform" requests through a password
