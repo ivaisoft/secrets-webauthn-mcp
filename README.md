@@ -203,17 +203,19 @@ name as a separate package, so nothing updates on its own.
 
 - Node 20+ (uses global `fetch`). WebAuthn works on `localhost` over http (secure
   context, rpID `localhost`).
-- A Bitwarden Secrets Manager **machine-account access token**. Provision a
-  **dedicated read-only machine account scoped to a single project** — this server
-  does not protect against a stolen token (that is out of scope; least-privilege
-  scope is the only mitigation).
+- **At least one Store**, and any subset works:
+  - **Bitwarden** — a Secrets Manager machine-account access token. Provision a **dedicated read-only machine account scoped to a single project**.
+  - **AWS** (Parameter Store and Secrets Manager) — `AWS_REGION` plus either static keys or SSO, with a policy scoped to an ARN prefix (see [Env](#env)).
+
+  This server does not protect against a stolen credential — that is out of
+  scope, and least-privilege scope is the only mitigation.
 
 ## Setup
 
 Published on npm — no clone needed:
 
 ```bash
-BWS_ACCESS_TOKEN=... npx -y @ivaisoft/secrets-webauthn-mcp register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
+npx -y @ivaisoft/secrets-webauthn-mcp register   # one-time per authenticator: opens the browser, binds Touch ID / passkey
 ```
 
 Or from a local clone (for development):
@@ -221,8 +223,12 @@ Or from a local clone (for development):
 ```bash
 npm install
 npm run build
-BWS_ACCESS_TOKEN=... npm run register
+npm run register
 ```
+
+`register` takes **no Store credential** — it never reads a secret, it only
+binds an authenticator (`RegisterEnvSchema` in `src/schemas.ts` reads nothing
+but `BWS_API_URL`). Don't hand it a token it has no use for.
 
 Credentials are stored as an **array** at
 `~/.config/secrets-webauthn-mcp/credentials.json` (public key + counter + transports
@@ -387,20 +393,27 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
 
 ## What this does and does not protect
 
-- **Protects**: the *release* of a secret. No value leaves Bitwarden without a
+- **Protects**: the *release* of a secret. No value leaves any Store without a
   fresh physical touch, and the value is never returned to the conversation — the
-  agent only ever gets the HTTP response or the child's output.
+  agent only ever gets the HTTP response or the child's output. That holds
+  because no Store's credential is reachable from the agent — including AWS,
+  which is why the ambient credential chain is refused
+  ([ADR 0009](./docs/adr/0009-aws-credentials-not-ambient-not-from-a-store.md)):
+  an `aws sso login` cache readable by the agent would make the Gate decorative.
 - **Does not undo a Consumer that reflects the secret**: if the endpoint or command
   you invoke prints the injected value back, it returns to the agent — documented,
   not enforced (same caveat as `bws run`).
 - **Local only.** The `localhost` rpID trick means this must run as a local stdio
   server. Behind a real domain, WebAuthn re-binds to that domain and the model
   changes (see [ADR 0003](./docs/adr/0003-local-stdio-only-not-clustered.md)).
-- **`list_secrets` exposes names, not values, without a touch.** Any agent that
-  can call it can enumerate your secret ids and key names — the same
-  information your access token already exposes via `bws secret list`, just
-  made convenient for the agent. If that's not acceptable for your threat
+- **`list_secrets` exposes Bitwarden names, not values, without a touch.** Any
+  agent that can call it can enumerate your Bitwarden secret ids and key names —
+  the same information your access token already exposes via `bws secret list`,
+  just made convenient for the agent. If that's not acceptable for your threat
   model, don't wire this tool up (see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)).
+  **AWS is not enumerable at all**, so no agent can map your parameter tree
+  through this server, and the AWS policy never needs an account-wide grant
+  ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)).
 
 ## Audit log
 
