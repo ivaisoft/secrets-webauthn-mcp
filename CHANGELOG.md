@@ -1,3 +1,10 @@
+## [2.3.1](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.3.0...v2.3.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* explain an empty list_secrets instead of returning a bare [] ([#11](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/11)) ([81cf9a9](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/81cf9a9ca44f3dc64f24f0a2d6014bd4b5ce5ef3))
+
 # [2.3.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.2.0...v2.3.0) (2026-08-10)
 
 
