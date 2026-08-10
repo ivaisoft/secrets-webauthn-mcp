@@ -1,3 +1,10 @@
+## [2.5.1](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.0...v2.5.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* close the gaps a review found in the SSM enumeration path ([#14](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/14)) ([fbc6553](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/fbc65535ef8bdae07f414120231c7498cba7976c))
+
 # [2.5.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.4.0...v2.5.0) (2026-08-10)
 
 
