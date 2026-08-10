@@ -1,6 +1,6 @@
 // Security-behaviour test for the http_request tool. No framework, no network:
 // fetch is mocked, bws is a fake, HOME is redirected to a throwaway sandbox so
-// we never read or write the real ~/.config/bws-webauthn-mcp, and the Gate is a
+// we never read or write the real ~/.config/secrets-webauthn-mcp, and the Gate is a
 // tiny real implementation of the same request-key semantics as gate.ts (not a
 // stub) — so the two-call "not yet approved -> approve out of band -> identical
 // call proceeds" flow is exercised exactly as it works in production, without
@@ -24,14 +24,15 @@ import assert from "node:assert/strict";
 // --- sandbox HOME before importing anything that resolves paths.ts ---
 const SANDBOX = mkdtempSync(join(tmpdir(), "bws-webauthn-test-"));
 process.env.HOME = SANDBOX;
-const CFG = join(SANDBOX, ".config", "bws-webauthn-mcp");
+const CFG = join(SANDBOX, ".config", "secrets-webauthn-mcp");
 mkdirSync(CFG, { recursive: true });
 const writeAllowlist = (obj: Record<string, string[]>) =>
   writeFileSync(join(CFG, "allowlist.json"), JSON.stringify(obj));
-writeAllowlist({ "sec-1": ["api.allowed.com"] });
+writeAllowlist({ "bws:sec-1": ["api.allowed.com"] });
 
 // Import AFTER HOME is set so STATE_DIR points into the sandbox.
 const { registerTools } = await import("../src/tools.js");
+const { createStoreRegistry } = await import("../src/store.js");
 const { HttpRequestArgsSchema } = await import("../src/schemas.js");
 const { requestKey } = await import("../src/request-key.js");
 
@@ -70,12 +71,14 @@ function makeFakeGate() {
 }
 const fakeGate = makeFakeGate();
 
-const fakeBws = {
+const fakeBwsStore = {
   getSecret: async (id: string) => { events.push("getSecret:" + id); return { key: "API_KEY", value: SECRET }; },
   listSecrets: async () => [],
 } as any;
 
-registerTools({ mcp: fakeMcp, gate: fakeGate, bws: fakeBws, timeoutMs: 1000 });
+// The REAL registry, so allowlist keys and reference routing are exercised together.
+const stores = createStoreRegistry({ bws: fakeBwsStore });
+registerTools({ mcp: fakeMcp, gate: fakeGate, stores, timeoutMs: 1000 });
 const http = handlers["http_request"]!;
 
 let fetchCalls: { url: string; init: any }[] = [];
@@ -101,7 +104,7 @@ async function test(name: string, fn: () => Promise<void>) {
 
 await test("deny: unknown secret → no Approval check, no fetch, audited unverified", async () => {
   mockFetch({});
-  const r = await call({ url: "https://api.allowed.com/x", secret_ids: ["sec-unknown"] });
+  const r = await call({ url: "https://api.allowed.com/x", secret_refs: ["bws:sec-unknown"] });
   assert.equal(r.isError, true);
   assert.match(textOf(r), /allowlist/i);
   assert.equal(events.includes("checkApproval"), false, "must not even check Approval on deny");
@@ -110,7 +113,7 @@ await test("deny: unknown secret → no Approval check, no fetch, audited unveri
 
 await test("deny: host not allowed for this secret → no Approval check, no fetch", async () => {
   mockFetch({});
-  const r = await call({ url: "https://evil.com/x", secret_ids: ["sec-1"] });
+  const r = await call({ url: "https://evil.com/x", secret_refs: ["bws:sec-1"] });
   assert.equal(r.isError, true);
   assert.equal(events.includes("checkApproval"), false);
   assert.equal(fetchCalls.length, 0);
@@ -118,7 +121,7 @@ await test("deny: host not allowed for this secret → no Approval check, no fet
 
 await test("first call (not yet approved) returns instructions + URL, never fetches", async () => {
   mockFetch({});
-  const args = { url: "https://api.allowed.com/x", secret_ids: ["sec-1"] };
+  const args = { url: "https://api.allowed.com/x", secret_refs: ["bws:sec-1"] };
   const r = await call(args);
   assert.equal(r.isError, true);
   assert.match(textOf(r), /physical approval required/i);
@@ -133,7 +136,7 @@ await test("first call (not yet approved) returns instructions + URL, never fetc
 });
 
 await test("second, identical call after out-of-band approval: fetch happens, secret injected, value never returned", async () => {
-  const args = { url: "https://api.allowed.com/x", secret_ids: ["sec-1"] };
+  const args = { url: "https://api.allowed.com/x", secret_refs: ["bws:sec-1"] };
   fakeGate.preApprove(keyFor(args));
   mockFetch({ status: 200, text: "RESPONSE_BODY" });
   const r = await call(args);
@@ -149,7 +152,7 @@ await test("second, identical call after out-of-band approval: fetch happens, se
 });
 
 await test("approval is single-use: a third call with the same args is not yet approved again", async () => {
-  const args = { url: "https://api.allowed.com/x", secret_ids: ["sec-1"] };
+  const args = { url: "https://api.allowed.com/x", secret_refs: ["bws:sec-1"] };
   mockFetch({});
   const r = await call(args); // no fresh preApprove — the prior one was consumed
   assert.equal(r.isError, true);
@@ -158,7 +161,7 @@ await test("approval is single-use: a third call with the same args is not yet a
 });
 
 await test("redirect: 3xx refused, body withheld, no leak", async () => {
-  const args = { url: "https://api.allowed.com/redir", secret_ids: ["sec-1"] };
+  const args = { url: "https://api.allowed.com/redir", secret_refs: ["bws:sec-1"] };
   fakeGate.preApprove(keyFor(args));
   mockFetch({ status: 302, text: "SHOULD_NOT_BE_RETURNED" });
   const r = await call(args);
@@ -169,7 +172,7 @@ await test("redirect: 3xx refused, body withheld, no leak", async () => {
 });
 
 await test("redirect: opaqueredirect also refused", async () => {
-  const args = { url: "https://api.allowed.com/redir2", secret_ids: ["sec-1"] };
+  const args = { url: "https://api.allowed.com/redir2", secret_refs: ["bws:sec-1"] };
   fakeGate.preApprove(keyFor(args));
   mockFetch({ status: 0, type: "opaqueredirect", text: "" });
   const r = await call(args);
@@ -178,15 +181,15 @@ await test("redirect: opaqueredirect also refused", async () => {
 });
 
 await test("multi-secret without a header array is rejected before any Approval check", async () => {
-  writeAllowlist({ "sec-1": ["api.allowed.com"], "sec-2": ["api.allowed.com"] });
+  writeAllowlist({ "bws:sec-1": ["api.allowed.com"], "bws:sec-2": ["api.allowed.com"] });
   mockFetch({});
-  const r = await call({ url: "https://api.allowed.com/x", secret_ids: ["sec-1", "sec-2"] });
+  const r = await call({ url: "https://api.allowed.com/x", secret_refs: ["bws:sec-1", "bws:sec-2"] });
   assert.equal(r.isError, true);
   assert.match(textOf(r), /header/i);
   assert.match(textOf(r), /array/i);
   assert.equal(events.includes("checkApproval"), false, "must reject ambiguous header mapping before touch");
   assert.equal(fetchCalls.length, 0);
-  writeAllowlist({ "sec-1": ["api.allowed.com"] });
+  writeAllowlist({ "bws:sec-1": ["api.allowed.com"] });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

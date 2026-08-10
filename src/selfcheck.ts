@@ -7,6 +7,7 @@ import { resolveEnvName } from "./envname.js";
 import { escapeHtml } from "./html.js";
 import { isAllowedRequest } from "./http-guard.js";
 import { requestKey } from "./request-key.js";
+import { lastPathSegment, parseSecretRef } from "./secret-ref.js";
 import { formatArgv } from "./shell-format.js";
 import type { Allowlist } from "./schemas.js";
 
@@ -17,27 +18,27 @@ function assert(condition: boolean, message: string): void {
 export function runSelfcheck(): void {
   // 1. Allowlist host check: allow / deny / unknown.
   const allowlist: Allowlist = {
-    "secret-a": ["api.example.com", "eu.example.com"],
-    "secret-b": ["api.example.com"],
+    "bws:secret-a": ["api.example.com", "eu.example.com"],
+    "ssm:/prod/secret-b": ["api.example.com"],
   };
   assert(
-    checkHostAllowed(allowlist, ["secret-a"], "api.example.com").ok === true,
+    checkHostAllowed(allowlist, ["bws:secret-a"], "api.example.com").ok === true,
     "allow: host listed for the secret",
   );
   assert(
-    checkHostAllowed(allowlist, ["secret-a", "secret-b"], "api.example.com").ok === true,
+    checkHostAllowed(allowlist, ["bws:secret-a", "ssm:/prod/secret-b"], "api.example.com").ok === true,
     "allow: host listed for every requested secret",
   );
   assert(
-    checkHostAllowed(allowlist, ["secret-a"], "evil.example.com").ok === false,
+    checkHostAllowed(allowlist, ["bws:secret-a"], "evil.example.com").ok === false,
     "deny: host not in the secret's list",
   );
   assert(
-    checkHostAllowed(allowlist, ["secret-a", "secret-b"], "eu.example.com").ok === false,
+    checkHostAllowed(allowlist, ["bws:secret-a", "ssm:/prod/secret-b"], "eu.example.com").ok === false,
     "deny: host allowed for one secret but not all",
   );
   assert(
-    checkHostAllowed(allowlist, ["secret-unknown"], "api.example.com").ok === false,
+    checkHostAllowed(allowlist, ["bws:secret-unknown"], "api.example.com").ok === false,
     "unknown: secret with no allowlist entry denies",
   );
 
@@ -49,17 +50,17 @@ export function runSelfcheck(): void {
     "publicKey base64 round-trip preserves bytes",
   );
 
-  // 3. Env-name resolution: default is the Bitwarden key name; override wins.
+  // 3. Env-name resolution: default is the Store's key name; override wins.
   assert(
-    resolveEnvName({ secretId: "s1", keyName: "STRIPE_KEY" }) === "STRIPE_KEY",
+    resolveEnvName({ ref: "bws:s1", keyName: "STRIPE_KEY" }) === "STRIPE_KEY",
     "env-name default is the key name",
   );
   assert(
-    resolveEnvName({ secretId: "s1", keyName: "STRIPE_KEY", overrides: { s1: "SK" } }) === "SK",
+    resolveEnvName({ ref: "bws:s1", keyName: "STRIPE_KEY", overrides: { "bws:s1": "SK" } }) === "SK",
     "env-name override wins",
   );
   assert(
-    resolveEnvName({ secretId: "s1", keyName: "STRIPE_KEY", overrides: { s2: "OTHER" } }) ===
+    resolveEnvName({ ref: "bws:s1", keyName: "STRIPE_KEY", overrides: { "bws:s2": "OTHER" } }) ===
       "STRIPE_KEY",
     "env-name override for a different secret does not apply",
   );
@@ -91,9 +92,9 @@ export function runSelfcheck(): void {
   assert(isAllowedRequest(undefined, undefined, ports) === false, "deny: missing Host header");
 
   // 6. Request-key determinism (the Gate's re-check-without-elicitation mechanism).
-  const argsA = { secret_ids: ["s1"], url: "https://api.example.com/x", method: "GET" };
-  const argsAReordered = { method: "GET", url: "https://api.example.com/x", secret_ids: ["s1"] };
-  const argsB = { secret_ids: ["s1"], url: "https://api.example.com/y", method: "GET" };
+  const argsA = { secret_refs: ["bws:s1"], url: "https://api.example.com/x", method: "GET" };
+  const argsAReordered = { method: "GET", url: "https://api.example.com/x", secret_refs: ["bws:s1"] };
+  const argsB = { secret_refs: ["bws:s1"], url: "https://api.example.com/y", method: "GET" };
   assert(
     requestKey("http_request", argsA) === requestKey("http_request", argsAReordered),
     "same args, different key order -> same request key",
@@ -123,6 +124,42 @@ export function runSelfcheck(): void {
     "an embedded single quote is escaped correctly",
   );
   assert(formatArgv(["node", "-v"]) === "node -v", "plain args are left unquoted");
+
+  // 8. Secret Reference grammar: `<store>:<id>[#subkey]`, prefix mandatory.
+  const bwsRef = parseSecretRef("bws:9f3c-4e2a");
+  assert(bwsRef.store === "bws" && bwsRef.id === "9f3c-4e2a", "bws reference parses");
+  assert(bwsRef.subkey === undefined, "no '#' means no subkey");
+
+  const ssmRef = parseSecretRef("ssm:/prod/app/STRIPE_KEY");
+  assert(ssmRef.store === "ssm" && ssmRef.id === "/prod/app/STRIPE_KEY", "ssm path keeps its leading slash");
+
+  const smRef = parseSecretRef("secretsmanager:prod/db#password");
+  assert(smRef.store === "secretsmanager" && smRef.id === "prod/db", "id stops at the '#'");
+  assert(smRef.subkey === "password", "subkey is read after the '#'");
+
+  // A Secrets Manager id may be a full ARN, which contains colons: only the
+  // FIRST colon separates the store, so the rest must survive intact.
+  const arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-AbCdEf";
+  assert(parseSecretRef(`secretsmanager:${arn}`).id === arn, "an ARN id round-trips unchanged");
+
+  const rejects = (raw: string, why: string): void => {
+    let threw = false;
+    try {
+      parseSecretRef(raw);
+    } catch {
+      threw = true;
+    }
+    assert(threw, why);
+  };
+  // The load-bearing one: an unprefixed id is refused, never assumed to be
+  // Bitwarden, so the human at the Gate always reads which Store is involved.
+  rejects("9f3c-4e2a", "an unprefixed id is rejected");
+  rejects("vault:9f3c", "an unknown store is rejected");
+  rejects("bws:", "an empty id is rejected");
+  rejects("secretsmanager:prod/db#", "an empty subkey is rejected");
+
+  assert(lastPathSegment("/prod/app/STRIPE_KEY") === "STRIPE_KEY", "default env name is the last path segment");
+  assert(lastPathSegment("FLAT_NAME") === "FLAT_NAME", "a non-hierarchical name is its own segment");
 
   process.stdout.write("selfcheck ok\n");
 }

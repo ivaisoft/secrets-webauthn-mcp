@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   } else if (mode === "serve") {
     if (rest.includes("--http")) {
       const { runServeHttp } = await import("./http-serve.js");
-      await runServeHttp(loadServeEnv().BWS_HTTP_PORT);
+      await runServeHttp(loadServeEnv().SECRETS_HTTP_PORT);
     } else {
       const { runServe } = await import("./serve.js");
       await runServe();

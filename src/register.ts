@@ -130,7 +130,7 @@ async function run(attachment){
           url.searchParams.get("attachment") ?? undefined,
         );
         const options = await generateRegistrationOptions({
-          rpName: "bws-webauthn-mcp",
+          rpName: "secrets-webauthn-mcp",
           rpID: RP_ID,
           userName: process.env.USER ?? "operator",
           attestationType: "none",

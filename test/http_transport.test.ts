@@ -16,20 +16,21 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 
 // Sandbox HOME *before* importing anything that resolves paths.ts (checkHostAllowed
-// in tools.ts reads the real ~/.config/bws-webauthn-mcp/allowlist.json otherwise —
+// in tools.ts reads the real ~/.config/secrets-webauthn-mcp/allowlist.json otherwise —
 // which, on this machine, holds the user's real secrets, not our test fixture).
 const SANDBOX = mkdtempSync(join(tmpdir(), "bws-webauthn-http-test-"));
 process.env.HOME = SANDBOX;
-const CFG = join(SANDBOX, ".config", "bws-webauthn-mcp");
+const CFG = join(SANDBOX, ".config", "secrets-webauthn-mcp");
 mkdirSync(CFG, { recursive: true });
-writeFileSync(join(CFG, "allowlist.json"), JSON.stringify({ s1: ["example.test"] }));
+writeFileSync(join(CFG, "allowlist.json"), JSON.stringify({ "bws:s1": ["example.test"] }));
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
 const { createHttpApp } = await import("../src/http-serve.js");
 const { requestKey } = await import("../src/request-key.js");
 const { HttpRequestArgsSchema } = await import("../src/schemas.js");
-type BwsGateway = import("../src/bws.js").BwsGateway;
+const { createStoreRegistry } = await import("../src/store.js");
+type StoreRegistry = import("../src/store.js").StoreRegistry;
 type Gate = import("../src/gate.js").Gate;
 
 const SECRET = "HTTP-TRANSPORT-SECRET-DO-NOT-LEAK";
@@ -48,10 +49,12 @@ const fakeGate: Gate = {
   },
   close: () => {},
 };
-const fakeBws: BwsGateway = {
-  getSecret: async (id: string) => ({ key: "API_KEY", value: SECRET }),
-  listSecrets: async () => [{ id: "s1", key: "API_KEY" }],
-};
+const stores: StoreRegistry = createStoreRegistry({
+  bws: {
+    getSecret: async (_id: string) => ({ key: "API_KEY", value: SECRET }),
+    listSecrets: async () => [{ id: "s1", key: "API_KEY" }],
+  },
+});
 
 // The port is only known after listen(0, ...) resolves, but createHttpApp needs
 // allowedHostPorts up front — pass a mutable array by reference and fill it in
@@ -59,7 +62,7 @@ const fakeBws: BwsGateway = {
 // every request, so this is not a race (no requests arrive before the test body
 // below runs, and listen()'s callback has already fired by then).
 const allowedHostPorts: string[] = [];
-const httpServer = createHttpApp({ gate: fakeGate, bws: fakeBws, timeoutMs: 1000, allowedHostPorts });
+const httpServer = createHttpApp({ gate: fakeGate, stores, timeoutMs: 1000, allowedHostPorts });
 
 let passed = 0, failed = 0;
 async function test(name: string, fn: () => Promise<void>) {
@@ -109,7 +112,7 @@ await test("tool call over HTTP: not-yet-approved first, then proceeds after out
     return originalFetch(url as string, init);
   }) as typeof fetch;
   try {
-    const callArgs = { url: "http://example.test/x", secret_ids: ["s1"] };
+    const callArgs = { url: "http://example.test/x", secret_refs: ["bws:s1"] };
     const before = approvalChecks;
 
     const first = await client!.callTool({ name: "http_request", arguments: callArgs });

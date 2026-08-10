@@ -13,24 +13,26 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { connectBws, type BwsGateway } from "./bws.js";
 import { loadServeEnv } from "./config.js";
+import { connectStores } from "./connect-stores.js";
 import { startGate, type Gate } from "./gate.js";
 import { isAllowedRequest } from "./http-guard.js";
 import { readJsonBody, sendJson } from "./http-util.js";
+import type { StoreRegistry } from "./store.js";
 import { registerTools } from "./tools.js";
+import { VERSION } from "./version.js";
 
 export interface HttpAppContext {
   gate: Gate;
-  bws: BwsGateway;
+  stores: StoreRegistry;
   timeoutMs: number;
   allowedHostPorts: readonly string[];
 }
 
-/** Build the request handler (gate/bws injected so it's testable without the real vault
- *  or hardware authenticator — see test/http_transport.test.ts). Not yet listening. */
+/** Build the request handler (gate/stores injected so it's testable without a real
+ *  Store or hardware authenticator — see test/http_transport.test.ts). Not yet listening. */
 export function createHttpApp(ctx: HttpAppContext): Server {
-  const { gate, bws, timeoutMs, allowedHostPorts } = ctx;
+  const { gate, stores, timeoutMs, allowedHostPorts } = ctx;
 
   // One McpServer + one transport per MCP session, exactly as the SDK's own
   // reference server does — required so `elicitInput` (used by every tool call
@@ -51,8 +53,8 @@ export function createHttpApp(ctx: HttpAppContext): Server {
       }
       const body = await readJsonBody(req);
       if (sid === undefined && isInitializeRequest(body)) {
-        const mcp = new McpServer({ name: "bws-webauthn-mcp", version: "2.0.0" });
-        registerTools({ mcp, gate, bws, timeoutMs });
+        const mcp = new McpServer({ name: "secrets-webauthn-mcp", version: VERSION });
+        registerTools({ mcp, gate, stores, timeoutMs });
         const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSid: string) => {
@@ -100,18 +102,26 @@ export function createHttpApp(ctx: HttpAppContext): Server {
 
 export async function runServeHttp(port: number): Promise<void> {
   const env = loadServeEnv();
+  const log = (line: string): void => void process.stderr.write(`${line}\n`);
+
   const gate = await startGate();
-  const bws = await connectBws(env);
+  const stores = await connectStores(env, log);
   const allowedHostPorts = [`127.0.0.1:${port}`, `localhost:${port}`];
 
-  const httpServer = createHttpApp({ gate, bws, timeoutMs: env.BWS_GATE_TIMEOUT_MS, allowedHostPorts });
+  const httpServer = createHttpApp({
+    gate,
+    stores,
+    timeoutMs: env.SECRETS_GATE_TIMEOUT_MS,
+    allowedHostPorts,
+  });
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
     httpServer.listen(port, "127.0.0.1", () => resolve());
   });
 
-  process.stderr.write(
-    `bws-webauthn-mcp (http) ready on http://127.0.0.1:${port}/mcp — Approvals served on ${gate.origin}\n`,
+  log(
+    `secrets-webauthn-mcp (http) ready on http://127.0.0.1:${port}/mcp — ` +
+      `Stores: ${stores.configured.join(", ")} — Approvals served on ${gate.origin}`,
   );
 }
