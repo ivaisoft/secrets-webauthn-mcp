@@ -59,3 +59,4 @@ _Avoid_: attacker, hacker
 
 - "secret_id" was used to mean both "a Bitwarden UUID" and "any secret's address" — resolved: every address is a **Secret Reference** and names its **Store**; an unprefixed id is rejected rather than assumed to be Bitwarden.
 - "Secrets Manager" was used to mean both this server and the AWS product — resolved: `secretsmanager:` names one **Store**; this server is named after neither.
+- "dual approval" was raised as a requirement — resolved: it is not a concept here. It only ever meant one **Approval** to unlock a **Store**'s credential and a second to read the secret, which no **Store** requires of another. An **Approval** stays exactly one assertion.

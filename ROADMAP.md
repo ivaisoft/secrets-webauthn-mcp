@@ -37,3 +37,13 @@ reasoning behind what's already here before assuming a "should" below is easy.
   this was considered and rejected for the threat model.
 - **No way to bypass the Gate for automation/CI.** The physical Approval is
   the point; a headless bypass would undo it.
+- **No dual / M-of-N Approval.** Raised while designing multi-Store support,
+  where it would have meant one Approval to unlock the AWS credential held in
+  Bitwarden and a second to read the parameter. That shape no longer exists —
+  no Store bootstraps another's credential
+  ([ADR 0009](./docs/adr/0009-aws-credentials-not-ambient-not-from-a-store.md)),
+  so there is no second barrier for a second Approval to guard. One Approval is
+  one assertion authorizing one use.
+- **No ambient AWS credentials.** `aws sso login`'s cache is readable by any
+  process running as you, including the agent — see ADR 0009 for why that would
+  make the Gate decorative for the AWS Stores.
