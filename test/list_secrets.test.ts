@@ -93,5 +93,46 @@ await test("a Store that cannot enumerate contributes nothing, and does not erro
   );
 });
 
+await test("AWS-only: an empty result explains itself instead of returning a bare []", async () => {
+  // The configuration a user hits the moment they wire up AWS without Bitwarden.
+  // "[]" is the correct answer forever here (ADR 0010), not a transient empty
+  // state, and it is indistinguishable from a broken server at the call site.
+  const awsOnly = createStoreRegistry({ ssm: fakeSsmStore, secretsmanager: fakeSsmStore });
+  const localHandlers: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, h: any) => { localHandlers[n] = h; } } as any,
+    gate: fakeGate,
+    stores: awsOnly,
+    timeoutMs: 1000,
+  });
+  const text = (await localHandlers["list_secrets"]!({})).content[0].text as string;
+
+  assert.notEqual(text.trim(), "[]", "a bare [] reads as a broken server");
+  assert.match(text, /ssm, secretsmanager/, "must name the Stores that are configured");
+  assert.match(text, /not configured/i, "must say Bitwarden — the only listable Store — is absent");
+  assert.match(text, /ssm:\/prod\/app\/STRIPE_KEY/, "must show how to address AWS secrets without listing");
+  assert.match(
+    text,
+    /never calls AWS/i,
+    "must not let an empty list be read as evidence about the AWS credential",
+  );
+});
+
+await test("Bitwarden configured but empty points at org/project, not at the AWS Stores", async () => {
+  const emptyBws = createStoreRegistry({
+    bws: { getSecret: async () => { throw new Error("no"); }, listSecrets: async () => [] } as any,
+    ssm: fakeSsmStore,
+  });
+  const localHandlers: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, h: any) => { localHandlers[n] = h; } } as any,
+    gate: fakeGate,
+    stores: emptyBws,
+    timeoutMs: 1000,
+  });
+  const text = (await localHandlers["list_secrets"]!({})).content[0].text as string;
+  assert.match(text, /BWS_ORGANIZATION_ID/, "an empty Bitwarden is a different diagnosis entirely");
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

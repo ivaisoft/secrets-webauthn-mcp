@@ -15,7 +15,7 @@ import { checkHostAllowed, loadAllowlist } from "./allowlist.js";
 import { resolveEnvName } from "./envname.js";
 import type { Gate } from "./gate.js";
 import { requestKey } from "./request-key.js";
-import { lastPathSegment, parseSecretRefs, type SecretRef } from "./secret-ref.js";
+import { lastPathSegment, parseSecretRefs, type SecretRef, type StoreName } from "./secret-ref.js";
 import { formatArgv } from "./shell-format.js";
 import type { SecretHandle, StoreRegistry } from "./store.js";
 import {
@@ -110,6 +110,33 @@ function resolveSchemes(scheme: string | string[], count: number): string[] {
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+/** Why list_secrets came back empty, in terms the caller can act on. Only
+ *  Bitwarden enumerates (ADR 0010), so "empty" means different things depending
+ *  on whether it is configured at all. */
+function emptyListExplanation(configured: readonly StoreName[]): string {
+  const stores = configured.length > 0 ? configured.join(", ") : "none";
+  const head = `No listable secrets.\n\nConfigured Stores: ${stores}.`;
+  const usage =
+    "AWS references are self-describing names, so use them directly without listing:\n" +
+    "  ssm:/prod/app/STRIPE_KEY\n" +
+    "  secretsmanager:prod/db#password\n\n" +
+    "This result says nothing about whether the AWS credential works: list_secrets " +
+    "never calls AWS. Only http_request / run_with_secret do.";
+
+  if (!configured.includes("bws")) {
+    return (
+      `${head}\n\nOnly the Bitwarden Store can be enumerated, and it is not configured. ` +
+      `The AWS Stores deliberately do not list (ADR 0010): it would need an ` +
+      `account-wide IAM grant that reading known parameters does not.\n\n${usage}`
+    );
+  }
+  return (
+    `${head}\n\nBitwarden is configured and is listable, but returned nothing — check that ` +
+    `BWS_ORGANIZATION_ID is the right organization and that the machine account's project ` +
+    `actually contains secrets. The AWS Stores never list (ADR 0010).\n\n${usage}`
+  );
+}
+
 export function registerTools(ctx: ToolContext): void {
   const { mcp, gate, stores, timeoutMs } = ctx;
 
@@ -133,6 +160,15 @@ export function registerTools(ctx: ToolContext): void {
       // trusted from the interface — so a future Store that adds fields (or a
       // bug in one) can't silently widen what this tool exposes.
       const safe = secrets.map((s) => ({ id: s.id, key: s.key }));
+      // A bare "[]" is indistinguishable from a broken server at the call site,
+      // and with an AWS-only configuration it is the CORRECT and permanent
+      // answer (ADR 0010) rather than a transient empty state. Say which Stores
+      // are configured and why none of them listed, so the caller doesn't read
+      // a working setup as a failure — and doesn't read this as evidence about
+      // the AWS credential either, which this tool never touches.
+      if (safe.length === 0) {
+        return { content: [{ type: "text" as const, text: emptyListExplanation(stores.configured) }] };
+      }
       return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
     },
   );
