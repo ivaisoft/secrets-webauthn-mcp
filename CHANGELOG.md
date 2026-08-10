@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.2.0...v2.3.0) (2026-08-10)
+
+
+### Features
+
+* address secrets by Store — AWS SSM Parameter Store and Secrets Manager ([#7](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/7)) ([dc25b8a](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/dc25b8a3f21b481544b992e3f5c656d081491c1f)), closes [#subkey](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/subkey) [#subkey](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/subkey)
+
 # [2.2.0](https://github.com/ivaisoft/bws-webauthn-mcp/compare/v2.1.2...v2.2.0) (2026-07-31)
 
 

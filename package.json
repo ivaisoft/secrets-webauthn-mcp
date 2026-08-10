@@ -1,6 +1,6 @@
 {
   "name": "@ivaisoft/secrets-webauthn-mcp",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "description": "MCP server for Bitwarden Secrets Manager, AWS SSM Parameter Store and AWS Secrets Manager: the agent USES secrets it never sees, and every use is gated by a fresh physical WebAuthn Approval (Touch ID / passkey).",
   "license": "MIT",
