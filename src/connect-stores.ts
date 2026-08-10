@@ -28,9 +28,14 @@ export async function connectStores(
   // the same region, and splitting them would mean two logins for one identity.
   const aws = resolveAwsAuth(env, log);
   if (aws) {
-    stores.ssm = createSsmStore(aws);
+    stores.ssm = createSsmStore(aws, env.SSM_PATH_PREFIX);
     stores.secretsmanager = createSecretsManagerStore(aws);
-    log(`AWS Stores enabled in ${aws.region} — credential: ${aws.describe()}`);
+    log(
+      `AWS Stores enabled in ${aws.region} — credential: ${aws.describe()}` +
+        (env.SSM_PATH_PREFIX !== undefined
+          ? `; Parameter Store listing scoped to ${env.SSM_PATH_PREFIX}`
+          : "; Parameter Store listing off (set SSM_PATH_PREFIX to enable)"),
+    );
   }
 
   return createStoreRegistry(stores);

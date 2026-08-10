@@ -51,8 +51,8 @@ flow the server runs itself and keeps in memory.
 ## Quick start
 
 ```bash
-# 1. Register once — binds Touch ID / passkey to this server
-BWS_ACCESS_TOKEN=... npx -y @ivaisoft/secrets-webauthn-mcp register
+# 1. Register once — binds Touch ID / passkey to this server (takes no credential)
+npx -y @ivaisoft/secrets-webauthn-mcp register
 
 # 2. Wire it into your MCP client (see "Wire into Claude Code" below)
 ```
@@ -73,7 +73,7 @@ see below.
 
 | Tool | What it does |
 |---|---|
-| `list_secrets()` | Lists every `{ id, key }` it can enumerate — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). `id` comes back as a full Secret Reference, ready to paste into the other tools. **Bitwarden only:** the AWS Stores deliberately do not enumerate, because `ssm:DescribeParameters` and `secretsmanager:ListSecrets` have no resource-level IAM form and would force an account-wide grant ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)). AWS references are self-describing names, so nothing is lost. |
+| `list_secrets()` | Lists every `{ id, key }` it can enumerate — **never a value**, and **does not require Approval** (it's discovery metadata, not secret use — see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)). `id` comes back as a full Secret Reference, ready to paste into the other tools. A Store enumerates only if that permission can be scoped no wider than the read it already grants ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)): Bitwarden always; SSM Parameter Store under `SSM_PATH_PREFIX`, via the resource-scopable `GetParametersByPath`; AWS Secrets Manager never, since `ListSecrets` cannot be scoped at all. Secrets that don't appear are still fully usable — AWS references are self-describing names. |
 | `http_request({ url, method?, secret_refs, header?, scheme?, body? })` | Injects the secret(s) into request **headers** and returns only `HTTP <status>\n\n<body>`. The target host must be in every requested secret's allowlist (checked **before** any touch). Redirects are **not** followed — a 3xx is refused so the injected header can never be forwarded to an unvetted host. |
 | `run_with_secret({ argv, secret_refs, env_overrides? })` | Spawns `argv[0]` with `argv[1..]` verbatim (**no shell**) and injects each secret as an **environment variable** (default name = the `#subkey`, else the Bitwarden key name, else the last path segment of an AWS name; override per reference with `env_overrides`). Every Store credential is stripped from the child's environment, so the command can never reach a Store directly. Returns the child's stdout, stderr, and exit code. No allowlist — the Approval prompt shows `argv` (shell-quoted for a faithful, readable display), each reference with its resolved name (never the value), and the injected env-var name, and the human approves. |
 
@@ -356,6 +356,7 @@ vault token's confinement to this process are identical to stdio mode.
 | `AWS_REGION` | — | **enables the AWS Stores** |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | — | static-keys mode |
 | `AWS_SSO_START_URL` / `AWS_SSO_REGION` / `AWS_SSO_ACCOUNT_ID` / `AWS_SSO_ROLE_NAME` | — | SSO device-flow mode — all four together, or none |
+| `SSM_PATH_PREFIX` | — | enables Parameter Store listing in `list_secrets`, scoped to this path (e.g. `/prod/app`) |
 | `SECRETS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
 
@@ -366,7 +367,8 @@ without an AWS credential is an error too — never a silent fall-through to
 Give the AWS credential the smallest policy that works: `ssm:GetParameter` and
 `secretsmanager:GetSecretValue` on an ARN **prefix**, plus `kms:Decrypt` for the
 key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
-`Resource: "*"` — this server never calls them.
+`Resource: "*"`. `GetParametersByPath` is only needed if you set `SSM_PATH_PREFIX`
+to enable listing, and it scopes to the same prefix you already grant reads on.
 
 ```json
 {
@@ -374,7 +376,7 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["ssm:GetParameter"],
+      "Action": ["ssm:GetParameter", "ssm:GetParametersByPath"],
       "Resource": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/*"
     },
     {
@@ -411,9 +413,11 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
   the same information your access token already exposes via `bws secret list`,
   just made convenient for the agent. If that's not acceptable for your threat
   model, don't wire this tool up (see [ADR 0005](./docs/adr/0005-list-secrets-ungated-metadata-only.md)).
-  **AWS is not enumerable at all**, so no agent can map your parameter tree
-  through this server, and the AWS policy never needs an account-wide grant
-  ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)).
+  **SSM Parameter Store enumerates only under `SSM_PATH_PREFIX`** — never the
+  whole account — and **AWS Secrets Manager never enumerates**, because its
+  listing API cannot be scoped by IAM at all. So no agent can map your parameter
+  tree beyond the prefix you chose, and the policy never needs an account-wide
+  grant ([ADR 0010](./docs/adr/0010-aws-stores-are-not-enumerable.md)).
 
 ## Audit log
 

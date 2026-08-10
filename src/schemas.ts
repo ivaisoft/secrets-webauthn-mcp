@@ -42,6 +42,14 @@ export const AwsEnvSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
   AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   AWS_SESSION_TOKEN: z.string().min(1).optional(),
+  /** Enables Parameter Store enumeration in list_secrets, scoped to this path.
+   *  Absent means SSM does not list at all — enumerating from "/" would be
+   *  enumerating the account, which is the grant ADR 0010 refuses to need. */
+  SSM_PATH_PREFIX: z
+    .string()
+    .min(1)
+    .regex(/^\//, "SSM_PATH_PREFIX must start with '/' (e.g. /prod/app)")
+    .optional(),
   /** Setting AWS_SSO_START_URL is what opts into the SSO device flow. */
   AWS_SSO_START_URL: z.string().url().optional(),
   AWS_SSO_REGION: z.string().min(1).optional(),
