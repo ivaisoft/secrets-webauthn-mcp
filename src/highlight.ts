@@ -42,15 +42,20 @@ function highlightLine(line: string): string {
         html += span(part, "fg");
         continue;
       }
-      const m = part.match(/^(\s*)(\S+)\s\(([^)]+)\)\s*(→)\s*(.+)$/);
+      // Two shapes, because only Bitwarden references carry a resolved name:
+      //   bws:9f3c… (API_KEY) → $API_KEY      — the id is opaque, so the name is shown
+      //   ssm:/prod/app/STRIPE_KEY → $STRIPE_KEY — the reference already IS the name
+      // The parenthetical is therefore optional rather than a third message
+      // shape, so this stays one branch instead of the fallback ADR 0008 warned
+      // about (which would leave every AWS reference undecorated).
+      const m = part.match(/^(\s*)(\S+)(?:\s\(([^)]+)\))?\s*(→)\s*(.+)$/);
       if (m) {
         const [, lead, id, key, arrow, envName] = m;
         html +=
           span(lead!, "fg") +
           span(id!, "meta") +
-          span(" (", "fg") +
-          span(key!, "fg") +
-          span(") ", "fg") +
+          (key !== undefined ? span(" (", "fg") + span(key, "fg") + span(")", "fg") : "") +
+          span(" ", "fg") +
           span(`${arrow} `, "fg") +
           span(envName!, "variable");
       } else {

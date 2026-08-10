@@ -1,7 +1,8 @@
 # Optional Streamable HTTP transport, loopback-only, opt-in
 
 `serve` now has an opt-in `--http` mode (`serve --http`) that carries the MCP
-*session* over Streamable HTTP on `127.0.0.1:<BWS_HTTP_PORT>` instead of stdio.
+*session* over Streamable HTTP on `127.0.0.1:<BWS_HTTP_PORT>` instead of stdio (the variable was renamed
+`SECRETS_HTTP_PORT` when the server stopped being Bitwarden-only).
 stdio remains the default: it is strictly more restrictive, since only the
 process a client directly spawns can speak to it, whereas an HTTP listener on
 loopback can in principle be reached by any local process — including a
