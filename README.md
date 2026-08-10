@@ -187,6 +187,18 @@ never returns a value:
 > "List the Bitwarden secrets available, then use the Stripe one to check
 > charge ch_123."
 
+## Migrating from `@ivaisoft/bws-webauthn-mcp`
+
+The package was renamed when it stopped being Bitwarden-only. npm treats the old
+name as a separate package, so nothing updates on its own.
+
+1. **Package and binary.** `@ivaisoft/bws-webauthn-mcp` → `@ivaisoft/secrets-webauthn-mcp`, and the bin is now `secrets-webauthn-mcp`. Update `command`/`args` in your MCP client config.
+2. **`secret_ids` → `secret_refs`**, and every entry needs its Store prefix: `9f3c…` becomes `bws:9f3c…`. An unprefixed id is rejected with a message naming the fix — never silently reinterpreted.
+3. **`allowlist.json` keys** need the same prefix. A leftover bare key reads as "no allowlist entry for secret …" and the call is denied before any touch, which is the safe direction to fail but will look like a bug if you don't expect it.
+4. **`env_overrides` keys** are Secret References too.
+5. **Env vars.** `BWS_GATE_TIMEOUT_MS` → `SECRETS_GATE_TIMEOUT_MS`, `BWS_HTTP_PORT` → `SECRETS_HTTP_PORT`. `BWS_ACCESS_TOKEN` and `BWS_ORGANIZATION_ID` keep their names — they now configure the Bitwarden Store specifically, and are optional.
+6. **Registered authenticators keep working.** State is read from `~/.config/secrets-webauthn-mcp` if it exists, else the old `~/.config/bws-webauthn-mcp` — one directory for both reads and writes. Nothing is moved, and no re-registration is needed; move it yourself whenever convenient.
+
 ## Requirements
 
 - Node 20+ (uses global `fetch`). WebAuthn works on `localhost` over http (secure

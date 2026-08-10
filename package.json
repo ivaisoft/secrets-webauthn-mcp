@@ -6,11 +6,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ivaisoft/bws-webauthn-mcp.git"
+    "url": "git+https://github.com/ivaisoft/secrets-webauthn-mcp.git"
   },
-  "homepage": "https://github.com/ivaisoft/bws-webauthn-mcp#readme",
+  "homepage": "https://github.com/ivaisoft/secrets-webauthn-mcp#readme",
   "bugs": {
-    "url": "https://github.com/ivaisoft/bws-webauthn-mcp/issues"
+    "url": "https://github.com/ivaisoft/secrets-webauthn-mcp/issues"
   },
   "bin": {
     "secrets-webauthn-mcp": "dist/index.js"
