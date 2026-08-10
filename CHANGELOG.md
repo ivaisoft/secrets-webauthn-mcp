@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.4.0...v2.5.0) (2026-08-10)
+
+
+### Features
+
+* optional Reuse Window covering one exact request, bounded by time and runs ([#13](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/13)) ([52c0a88](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/52c0a88af8255504e2a6c291897fb4905ebda808))
+
 # [2.4.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.3.1...v2.4.0) (2026-08-10)
 
 
