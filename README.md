@@ -19,10 +19,13 @@ parsing the prose.
 
 Every **Store** credential lives **only** inside this server process; the agent
 has no `bws`, no token, and no AWS credential. These tools are the **sole** path
-to any secret, and the Gate is unbypassable. There is **no cache** — every single
-use requires its own fresh Approval (see
-[ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)). Secret values are
-**never** returned to the agent, placed in `argv`, or written to any log.
+to any secret, and the Gate is unbypassable. By default there is **no cache** —
+every single use requires its own fresh Approval
+([ADR 0002](./docs/adr/0002-no-cache-one-approval-per-use.md)). You can opt into a
+**Reuse Window** covering one byte-identical call, bounded by time *and* by run
+count ([ADR 0011](./docs/adr/0011-reuse-window-bounded-by-time-and-runs.md)) —
+off unless you enable it. Secret values are **never** returned to the agent,
+placed in `argv`, or written to any log.
 
 ## Secret References
 
@@ -358,6 +361,8 @@ vault token's confinement to this process are identical to stdio mode.
 | `AWS_SSO_START_URL` / `AWS_SSO_REGION` / `AWS_SSO_ACCOUNT_ID` / `AWS_SSO_ROLE_NAME` | — | SSO device-flow mode — all four together, or none |
 | `SECRETS_GATE_TIMEOUT_MS` | `120000` | how long the tool waits for the Approval |
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
+| `SECRETS_REUSE_MAX_MS` | `0` (off) | longest Reuse Window a human may grant at the Gate |
+| `SECRETS_REUSE_MAX_USES` | `5` | most runs one Reuse Window may cover |
 
 At least one Store must be configured or startup fails. Setting `AWS_REGION`
 without an AWS credential is an error too — never a silent fall-through to
@@ -400,6 +405,12 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
   which is why the ambient credential chain is refused
   ([ADR 0009](./docs/adr/0009-aws-credentials-not-ambient-not-from-a-store.md)):
   an `aws sso login` cache readable by the agent would make the Gate decorative.
+- **A Reuse Window trades replay for friction.** Granting "10 minutes, up to 5
+  runs" authorizes up to five executions of that exact call, and you cannot know
+  how many will happen. Harmless for a `select 1`; not harmless for a deploy, a
+  `DELETE`, or anything that charges a card. That is why the run count exists
+  alongside the clock, and why the whole feature is off until you set
+  `SECRETS_REUSE_MAX_MS` ([ADR 0011](./docs/adr/0011-reuse-window-bounded-by-time-and-runs.md)).
 - **Does not undo a Consumer that reflects the secret**: if the endpoint or command
   you invoke prints the injected value back, it returns to the agent — documented,
   not enforced (same caveat as `bws run`).
@@ -419,7 +430,9 @@ key that encrypts them. No `DescribeParameters`, no `ListSecrets`, no
 
 Every `http_request`/`run_with_secret` attempt appends one JSONL line to
 `~/.config/secrets-webauthn-mcp/audit.log` (`{ ts, tool, secret_refs, host|argv0,
-verified }`) — never the value. `list_secrets` calls are not audited: it never
+verified, reused }`) — never the value. `reused: true` marks a run covered by a
+Reuse Window rather than a fresh sensor press, so the trail never claims a touch
+that did not happen. `list_secrets` calls are not audited: it never
 touches a specific secret's value, so there's no "use" to record.
 
 ## Selfcheck

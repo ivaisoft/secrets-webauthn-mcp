@@ -104,7 +104,10 @@ export async function runServeHttp(port: number): Promise<void> {
   const env = loadServeEnv();
   const log = (line: string): void => void process.stderr.write(`${line}\n`);
 
-  const gate = await startGate();
+  const gate = await startGate({
+    reuseMaxMs: env.SECRETS_REUSE_MAX_MS,
+    reuseMaxUses: env.SECRETS_REUSE_MAX_USES,
+  });
   const stores = await connectStores(env, log);
   const allowedHostPorts = [`127.0.0.1:${port}`, `localhost:${port}`];
 

@@ -43,9 +43,9 @@ const fakeGate: Gate = {
     approvalChecks++;
     if (approvedKeys.has(key)) {
       approvedKeys.delete(key);
-      return true;
+      return { approved: true, reused: false };
     }
-    return false;
+    return { approved: false, reused: false };
   },
   close: () => {},
 };

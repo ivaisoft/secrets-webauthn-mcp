@@ -69,6 +69,14 @@ export const ServeEnvSchema = BwsEnvSchema.merge(AwsEnvSchema)
     SECRETS_GATE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
     /** Only read when `serve --http` is used; the stdio mode ignores this. */
     SECRETS_HTTP_PORT: z.coerce.number().int().positive().default(8787),
+    /** Longest reuse window a human may grant at the Gate. 0 (the default)
+     *  disables the feature: the approve page offers no such control and the
+     *  server refuses any window. Enabling it weakens ADR 0002 deliberately —
+     *  see ADR 0011 — so it must be turned on explicitly, never by default. */
+    SECRETS_REUSE_MAX_MS: z.coerce.number().int().nonnegative().default(0),
+    /** Most executions a single reuse window may cover. Time alone would be a
+     *  blank cheque: the human cannot know how many runs they authorized. */
+    SECRETS_REUSE_MAX_USES: z.coerce.number().int().positive().default(5),
   })
   .superRefine((env, ctx) => {
     const issue = (message: string): void => {

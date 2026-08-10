@@ -10,6 +10,12 @@ export interface AuditEntry {
   host?: string; // http_request
   argv0?: string; // run_with_secret
   verified: boolean;
+  /** True when the use was covered by a reuse window rather than a fresh
+   *  physical touch (ADR 0011). Without this the trail would imply a human
+   *  pressed the sensor for every verified line, which stopped being true the
+   *  moment reuse windows existed — an audit log that overstates is worse than
+   *  one that omits. */
+  reused?: boolean;
 }
 
 export function appendAudit(entry: AuditEntry): void {

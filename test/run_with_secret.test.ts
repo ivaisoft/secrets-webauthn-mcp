@@ -58,13 +58,13 @@ function makeFakeGate() {
   return {
     origin: "http://localhost:9",
     port: 9,
-    checkApproval(key: string): boolean {
+    checkApproval(key: string) {
       events.push("checkApproval");
       if (approved.has(key)) {
         approved.delete(key);
-        return true;
+        return { approved: true, reused: false };
       }
-      return false;
+      return { approved: false, reused: false };
     },
     preApprove(key: string) {
       approved.add(key);
@@ -275,6 +275,27 @@ await test("invalid env var name is refused", async () => {
   assert.equal(r.isError, true);
   assert.match(textOf(r), /invalid/i);
   assert.ok(!textOf(r).includes(SECRET));
+});
+
+await test("a reuse-window run is audited as reused, so the trail never overstates a touch", async () => {
+  // The audit log is the only record of who authorized what. Once a window can
+  // cover a run without a sensor press, a line that says only verified:true
+  // would claim a touch that never happened (ADR 0011).
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  const reuseHandlers: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, h: any) => { reuseHandlers[n] = h; } } as any,
+    gate: { origin: "http://localhost:9", port: 9, checkApproval: () => ({ approved: true, reused: true }) } as any,
+    stores,
+    timeoutMs: 1000,
+  });
+  await reuseHandlers["run_with_secret"]!(
+    RunWithSecretArgsSchema.parse({ argv: echo("'x'"), secret_refs: ["bws:s1"] }),
+  );
+  const line = readFileSync(join(CFG, "audit.log"), "utf8").trim().split("\n").pop()!;
+  const entry = JSON.parse(line);
+  assert.equal(entry.verified, true);
+  assert.equal(entry.reused, true, "a window-covered run must be distinguishable from a fresh touch");
 });
 
 await test("audit records the tool + argv0 but never the secret", async () => {

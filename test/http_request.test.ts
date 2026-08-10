@@ -56,13 +56,13 @@ function makeFakeGate() {
   return {
     origin: "http://localhost:9",
     port: 9,
-    checkApproval(key: string): boolean {
+    checkApproval(key: string) {
       events.push("checkApproval");
       if (approved.has(key)) {
         approved.delete(key);
-        return true;
+        return { approved: true, reused: false };
       }
-      return false;
+      return { approved: false, reused: false };
     },
     preApprove(key: string) {
       approved.add(key);

@@ -24,8 +24,15 @@ _Avoid_: auth, check, 2FA
 
 **Approval**:
 A single successful human verification — one WebAuthn assertion — that authorizes
-exactly one secret use. Approvals are not remembered between uses.
+one use of one exact request, or a bounded run of that same request when the
+human grants a Reuse Window.
 _Avoid_: confirmation, consent
+
+**Reuse Window**:
+A bounded grant, chosen at the Gate, that lets one byte-identical request run
+again without a new Approval — limited by elapsed time and by remaining runs,
+whichever ends first.
+_Avoid_: cache, session, standing approval
 
 **Injection**:
 Delivering a secret to its Consumer through a channel that is never logged — a
@@ -46,7 +53,8 @@ _Avoid_: attacker, hacker
 ## Relationships
 
 - A **Store** holds many secrets; a **Secret Reference** addresses exactly one secret in exactly one **Store**
-- One **Approval** authorizes exactly one use of one set of **Secret References**, which may span **Stores**
+- One **Approval** authorizes one use of one set of **Secret References**, which may span **Stores**
+- A **Reuse Window** covers exactly one request — never a **Store**, never a **Secret Reference**
 - **Injection** delivers a secret to a **Consumer**; the value never returns to the agent
 - The **Gate** is the only path from any **Store** to any **Consumer**
 
@@ -59,4 +67,5 @@ _Avoid_: attacker, hacker
 
 - "secret_id" was used to mean both "a Bitwarden UUID" and "any secret's address" — resolved: every address is a **Secret Reference** and names its **Store**; an unprefixed id is rejected rather than assumed to be Bitwarden.
 - "Secrets Manager" was used to mean both this server and the AWS product — resolved: `secretsmanager:` names one **Store**; this server is named after neither.
+- "cache" was used for what is now a **Reuse Window** — resolved: they are different things. A cache would let *other* calls reuse an **Approval**; a Reuse Window covers one byte-identical request and nothing else.
 - "dual approval" was raised as a requirement — resolved: it is not a concept here. It only ever meant one **Approval** to unlock a **Store**'s credential and a second to read the secret, which no **Store** requires of another. An **Approval** stays exactly one assertion.

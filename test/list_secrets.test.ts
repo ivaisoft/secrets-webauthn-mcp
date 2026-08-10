@@ -25,7 +25,7 @@ const fakeMcp = {
 } as any;
 
 let approvals = 0;
-const fakeGate = { checkApproval: () => { approvals++; return true; } } as any;
+const fakeGate = { checkApproval: () => { approvals++; return { approved: true, reused: false }; } } as any;
 
 // Deliberately shaped like the REAL bws API response the user showed, which
 // includes value/projectId/note/dates — listSecrets() itself is expected to
