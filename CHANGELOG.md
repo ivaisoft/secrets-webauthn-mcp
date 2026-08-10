@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.3.1...v2.4.0) (2026-08-10)
+
+
+### Features
+
+* enumerate SSM Parameter Store under a configured path prefix ([#12](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/12)) ([be785da](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/be785da9d7249de48ca63a1d1808052d50ca846a))
+
 ## [2.3.1](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.3.0...v2.3.1) (2026-08-10)
 
 
