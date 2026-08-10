@@ -29,7 +29,11 @@ jobs:
       - run: npm run build
       - run: npm run selfcheck
       - run: npm test
+      # No NPM_TOKEN. Publishing goes through OIDC trusted publishing, confirmed
+      # by the SLSA provenance attestation on 2.3.0 — npm only attaches that by
+      # default for a trusted publish. A stored token here would be a standing
+      # credential with nothing to do, which is the opposite of what this
+      # project argues for everywhere else.
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
