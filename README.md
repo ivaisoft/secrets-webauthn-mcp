@@ -43,6 +43,13 @@ secretsmanager:prod/db#password   AWS Secrets Manager, one field of a JSON secre
 `#subkey` picks one top-level key out of a JSON secret and works for every
 Store. One Approval covers all the references in a call, even across Stores.
 
+> **Secrets Manager: the `-AbCdEf` at the end of an ARN is not part of the name.**
+> AWS appends a random 6-character suffix to the *ARN*, so
+> `arn:aws:secretsmanager:…:secret:prod/db-AbCdEf` is the secret named `prod/db`.
+> A reference takes the **name** (`secretsmanager:prod/db`) or the **full ARN**
+> (`secretsmanager:arn:aws:secretsmanager:…:secret:prod/db-AbCdEf`) — name plus
+> suffix is neither, and fails with "can't find the specified secret".
+
 **This server never reads `~/.aws`.** Not `credentials`, not `config`, not
 `sso/cache`, and never the default credential chain — because `aws sso login`'s
 cache is readable by any process running as you, including the prompt-injected
@@ -130,6 +137,11 @@ an env var, never as a CLI flag (which would leak it into `ps`/shell history):
 ```
 
 `psql` reads `PGPASSWORD` from its environment automatically.
+
+The default env var name is the last path segment, so a secret called
+`app/staging/tokio-token` would try to inject `$tokio-token` — not a legal
+environment variable name, and refused as such. Any name with a hyphen or a dot
+needs `env_overrides`.
 
 ### Use a parameter straight out of SSM
 

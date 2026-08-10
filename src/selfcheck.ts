@@ -9,6 +9,7 @@ import { escapeHtml } from "./html.js";
 import { isAllowedRequest } from "./http-guard.js";
 import { requestKey } from "./request-key.js";
 import { lastPathSegment, parseSecretRef } from "./secret-ref.js";
+import { notFoundHint } from "./secretsmanager.js";
 import { formatArgv } from "./shell-format.js";
 import { AwsEnvSchema, type Allowlist } from "./schemas.js";
 
@@ -214,6 +215,28 @@ export function runSelfcheck(): void {
   assert(
     !AwsEnvSchema.safeParse({ SSM_PATH_PREFIX: "prod/app" }).success,
     "a prefix without a leading slash is rejected",
+  );
+
+  // 11. Secrets Manager "not found" gets a diagnosis, not just AWS's message.
+  // The ARN's random 6-character suffix is not part of the secret's name, and
+  // pasting name-plus-suffix out of the console is the most common way to
+  // address a secret wrongly — GetSecretValue takes the name OR the full ARN,
+  // and that is neither.
+  const notFound = { name: "ResourceNotFoundException" };
+  const hinted = notFoundHint(notFound, "ombrellosolar/staging/tokio-token-vPtF1m");
+  assert(hinted instanceof Error, "a not-found is rewritten into a readable Error");
+  assert(
+    (hinted as Error).message.includes('"ombrellosolar/staging/tokio-token"'),
+    "and names the reference to try instead, with the ARN suffix removed",
+  );
+  assert(
+    !((notFoundHint(notFound, "app/plain-name") as Error).message.includes("suffix")),
+    "a name with no ARN-looking suffix gets no suffix advice",
+  );
+  const other = { name: "AccessDeniedException" };
+  assert(
+    notFoundHint(other, "anything") === other,
+    "every other error is passed through untouched — only not-found is reinterpreted",
   );
 
   process.stdout.write("selfcheck ok\n");
