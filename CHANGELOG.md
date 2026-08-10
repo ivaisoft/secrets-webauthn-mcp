@@ -1,3 +1,10 @@
+## [2.5.2](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.1...v2.5.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* diagnose a Secrets Manager not-found instead of relaying AWS's message ([#16](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/16)) ([be21deb](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/be21deb71038b6fae489514e05c688910852014f))
+
 ## [2.5.1](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.0...v2.5.1) (2026-08-10)
 
 
