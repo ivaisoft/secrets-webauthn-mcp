@@ -59,10 +59,10 @@ function approvalRequired(message: string, url: string): ToolResult {
   };
 }
 
-function errorResult(reason: string): ToolResult {
+function errorResult(reason: string, extra?: Record<string, unknown>): ToolResult {
   return {
     content: [{ type: "text", text: reason }],
-    structuredContent: { status: "error", reason },
+    structuredContent: { status: "error", reason, ...extra },
     isError: true,
   };
 }
@@ -252,7 +252,20 @@ export function registerTools(ctx: ToolContext): void {
       const check = checkHostAllowed(loadAllowlist(), raws, host);
       if (!check.ok) {
         appendAudit({ tool: "http_request", secret_refs: raws, host, verified: false });
-        return errorResult(`Blocked by allowlist: ${check.reason}`);
+        if (check.ref === undefined) return errorResult(`Blocked by allowlist: ${check.reason}`);
+        // Offer the fix, on its own page. Widening the allowlist and using a
+        // secret are different decisions, so they never share a screen: this
+        // link grants the host and nothing else, and the call still has to come
+        // back through the Gate on its own afterwards.
+        const grantUrl = gate.requestHostGrant(check.ref, host, timeoutMs);
+        return errorResult(
+          `Blocked by allowlist: ${check.reason}.\n\n` +
+            `To allow "${host}" for ${check.ref}, open this and confirm with Touch ID / passkey:\n` +
+            `${grantUrl}\n\n` +
+            `That only widens the allowlist — it does not approve this call. Re-issue the call ` +
+            `afterwards and approve it as usual.`,
+          { grant_url: grantUrl },
+        );
       }
 
       let headerNames: string[];

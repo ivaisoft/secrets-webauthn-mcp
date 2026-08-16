@@ -67,8 +67,13 @@ function makeFakeGate() {
     preApprove(key: string) {
       approved.add(key);
     },
+    requestHostGrant(ref: string, host: string) {
+      grantsOffered.push(`${ref}|${host}`);
+      return `http://localhost:9/allowlist?gid=fake-${grantsOffered.length}`;
+    },
   };
 }
+let grantsOffered: string[] = [];
 const fakeGate = makeFakeGate();
 
 const fakeBwsStore = {
@@ -117,6 +122,19 @@ await test("deny: host not allowed for this secret → no Approval check, no fet
   assert.equal(r.isError, true);
   assert.equal(events.includes("checkApproval"), false);
   assert.equal(fetchCalls.length, 0);
+});
+
+await test("a denied host offers a grant link for that exact reference, and still denies", async () => {
+  grantsOffered = [];
+  writeAllowlist({ "bws:sec-1": ["api.allowed.com"] });
+  const r = await call({ url: "https://new-host.example/x", secret_refs: ["bws:sec-1"] });
+
+  assert.equal(r.isError, true, "the call is still refused — the link does not let it through");
+  assert.equal(events.includes("fetch"), false, "and nothing is fetched");
+  assert.deepEqual(grantsOffered, ["bws:sec-1|new-host.example"], "grant is scoped to the denying reference and that host");
+  assert.match(textOf(r), /allowlist\?gid=/, "the fix is offered as a link");
+  assert.match(textOf(r), /does not approve this call/i, "and says plainly that it is not an approval");
+  assert.equal(typeof r.structuredContent.grant_url, "string", "clients get it structurally, not only in prose");
 });
 
 await test("first call (not yet approved) returns instructions + URL, never fetches", async () => {

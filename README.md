@@ -266,6 +266,25 @@ to the hosts it may be sent to (missing entry = deny):
 Keys are references exactly as written in a tool call, so an entry grants hosts
 to one secret in one Store — never to a bare id two Stores might both claim.
 
+You rarely edit it by hand. When `http_request` is blocked, the error carries a
+link to a page that adds that one host for that one reference, confirmed with a
+touch:
+
+```
+Blocked by allowlist: host api.stripe.com not allowed for secret bws:9f3c….
+
+To allow "api.stripe.com" for bws:9f3c…, open this and confirm with Touch ID / passkey:
+http://localhost:53124/allowlist?gid=…
+
+That only widens the allowlist — it does not approve this call. Re-issue the call
+afterwards and approve it as usual.
+```
+
+**Two touches, deliberately.** Granting a host and using a secret are different
+decisions, so they never share a screen: the grant page cannot approve a call,
+and the approval page cannot widen the allowlist. Clients get the link as
+`grant_url` in `structuredContent`, not only in prose.
+
 ## Wire into Claude Code
 
 ```bash

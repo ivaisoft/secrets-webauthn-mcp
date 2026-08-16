@@ -84,6 +84,7 @@ the set, which may span Stores). Secret values are never returned to the agent.
 
 - Args: `{ url, method?="GET", secret_refs: [...], header?="Authorization", scheme?="Bearer ", body? }`
 - **Allowlist:** local `allowlist.json` maps each **Secret Reference** -> `[allowed hosts]`. Reject **before** any touch if `new URL(url).host` is not in the allowed hosts of **every** requested secret.
+- **Granting a host:** a rejection returns a `grant_url` to `/allowlist?gid=…` on the Gate's port, where one host is added for one reference after a WebAuthn touch (`addAllowedHost`, written temp-file-then-rename). It is a **separate page and a separate touch** from approving a use: the grant page never approves a call, and the approve page never widens the allowlist. The blocked call is still blocked and must be re-issued and approved normally. Pending grants live in their own map with their own TTL, and `verifyAssertion` is shared so the credential counter advances identically for both.
 - Injects secret(s) into the request **header** (`header: scheme+value`). For multiple secrets, header/scheme are per-secret (allow an array form).
 - Returns `HTTP <status>\n\n<body>` only. Never follows redirects — a 3xx to an off-allowlist host would otherwise forward the injected header there.
 - `outputSchema` (ADR 0007): `{ status: "approval_required"|"ok"|"error", approve_url?, reason?, http_status?, body? }`.

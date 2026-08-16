@@ -5,8 +5,8 @@
 // Keys are Secret References exactly as written in a tool call — `bws:9f3c-…`,
 // `ssm:/prod/app/STRIPE_KEY` — so an entry grants hosts to one secret in one
 // Store, never to a bare id that two Stores might both claim.
-import { existsSync, readFileSync } from "node:fs";
-import { ALLOWLIST_FILE } from "./paths.js";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { ALLOWLIST_FILE, STATE_DIR } from "./paths.js";
 import { AllowlistSchema, type Allowlist } from "./schemas.js";
 
 /** Read + validate the allowlist. Returns {} (deny-all) when the file is absent. */
@@ -16,9 +16,37 @@ export function loadAllowlist(): Allowlist {
   return AllowlistSchema.parse(raw);
 }
 
+/**
+ * Add one host to one Secret Reference's allowed set, and return the result.
+ *
+ * Only ever called after a WebAuthn assertion has been verified (gate.ts): this
+ * widens what the agent may do, so it is a decision the human makes with the
+ * sensor, exactly like using a secret — never a side effect of approving a use.
+ *
+ * Written via a temp file + rename so a crash mid-write cannot leave a
+ * truncated allowlist, which would silently deny every secret rather than fail
+ * loudly.
+ */
+export function addAllowedHost(ref: string, host: string): Allowlist {
+  const current = loadAllowlist();
+  const hosts = current[ref] ?? [];
+  const next: Allowlist = hosts.includes(host)
+    ? current
+    : { ...current, [ref]: [...hosts, host] };
+
+  mkdirSync(STATE_DIR, { recursive: true });
+  const tmp = `${ALLOWLIST_FILE}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, ALLOWLIST_FILE);
+  return next;
+}
+
 export interface HostCheckResult {
   ok: boolean;
   reason?: string;
+  /** The reference that denied, when one did — so the caller can offer to grant
+   *  this host for exactly that reference rather than guessing which to widen. */
+  ref?: string;
 }
 
 /**
@@ -35,10 +63,10 @@ export function checkHostAllowed(
   for (const ref of secretRefs) {
     const hosts = allowlist[ref];
     if (hosts === undefined) {
-      return { ok: false, reason: `no allowlist entry for secret ${ref}` };
+      return { ok: false, reason: `no allowlist entry for secret ${ref}`, ref };
     }
     if (!hosts.includes(host)) {
-      return { ok: false, reason: `host ${host} not allowed for secret ${ref}` };
+      return { ok: false, reason: `host ${host} not allowed for secret ${ref}`, ref };
     }
   }
   return { ok: true };

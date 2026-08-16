@@ -283,6 +283,14 @@ const ToolStatusFields = {
         "(Touch ID / passkey), then re-issue this exact tool call with the same arguments.",
     ),
   reason: z.string().optional().describe('Present when status is "error": why the call did not proceed.'),
+  grant_url: z
+    .string()
+    .optional()
+    .describe(
+      "Present when the call was blocked by the allowlist. Open it to authorize the host for " +
+        "that secret with a WebAuthn touch. This only widens the allowlist — the call still " +
+        "needs its own Approval afterwards, so re-issue it and follow approve_url.",
+    ),
 };
 
 export const HttpRequestOutputSchema = {

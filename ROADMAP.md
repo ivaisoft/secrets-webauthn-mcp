@@ -17,11 +17,15 @@ reasoning behind what's already here before assuming a "should" below is easy.
   `allowlist.json`, no registered credentials, or — the one that actually bit
   us — a browser/OS routing WebAuthn "platform" requests through a password
   manager instead of Touch ID.
-- **Allowlist management tool.** `allowlist.json` is hand-edited today. A
-  `list_secrets`-adjacent read tool (or a companion CLI command) to show the
-  current mapping would remove a step, without needing a *write* tool (which
-  would be a real, separate security decision — an agent that can edit its
-  own allowlist is a different threat model).
+- **Allowlist *read* tool.** A blocked `http_request` now offers a link to grant
+  that one host for that one reference after a touch, so the file is no longer
+  hand-edited in practice. What is still missing is a way to *see* the current
+  mapping — a `list_secrets`-adjacent read tool, or a CLI command.
+  The distinction this entry originally drew still holds and is why the grant
+  is a page rather than a tool: **an agent that can edit its own allowlist is a
+  different threat model.** The write exists, but the agent cannot perform it —
+  it only receives a URL, and a human authorizes the change with the sensor, on
+  a screen that cannot also approve a secret use.
 
 ## Under consideration
 
@@ -62,6 +66,18 @@ reasoning behind what's already here before assuming a "should" below is easy.
   surface, which would have needed a name allowlist (or `env:AWS_SECRET_ACCESS_KEY`
   would hand over a Store credential for one Approval) plus stripping every
   listed variable from the child env.
+- **No "always allow this command" prefix rule.** Asked for as the equivalent of
+  a coding agent's always-allow, e.g. trust `psql` and stop being asked.
+  Rejected because the unit is wrong: approving a *binary* approves every
+  argument it will ever be given, and for the tools people reach for that is
+  unbounded — `psql` alone reaches `COPY ... TO PROGRAM`, `aws` reaches every
+  API, `curl` reaches every host. It would be a standing grant of arbitrary
+  execution with a secret injected, which is a larger hole than the cache
+  ADR 0002 rejected, since a cache at least expired. The real need — iterating
+  on one command without touching the sensor each time — is what a **Reuse
+  Window** (ADR 0011) covers, bounded to the byte-identical call and to a run
+  count; raise `SECRETS_REUSE_MAX_MS` / `SECRETS_REUSE_MAX_USES` if it is too
+  tight in practice.
 - **No way to bypass the Gate for automation/CI.** The physical Approval is
   the point; a headless bypass would undo it.
 - **No dual / M-of-N Approval.** Raised while designing multi-Store support,
