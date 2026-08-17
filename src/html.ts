@@ -70,6 +70,12 @@ export function page(title: string, body: string): string {
   h2{margin:0;font-family:var(--font-display);font-weight:800;font-size:var(--text-xl);color:var(--fg-1)}
   .lede{margin:4px 0 0;font-size:var(--text-sm);color:var(--fg-2)}
   .hint{margin:0;font-size:var(--text-xs);color:var(--fg-2);line-height:1.5}
+  /* One pending request in the console list. Not .card — that is the page shell. */
+  .item{
+    border:1px solid var(--border-subtle);border-radius:var(--radius-md);
+    padding:14px;display:flex;flex-direction:column;gap:10px;
+  }
+  .item + .item{margin-top:14px}
   .btn{
     font:inherit;font-family:var(--font-body);font-weight:600;width:100%;cursor:pointer;
     border-radius:var(--radius-md);border:1px solid transparent;padding:14px 22px;font-size:var(--text-lg);

@@ -26,13 +26,14 @@ export interface HttpAppContext {
   gate: Gate;
   stores: StoreRegistry;
   timeoutMs: number;
+  waitForApprovalMs?: number;
   allowedHostPorts: readonly string[];
 }
 
 /** Build the request handler (gate/stores injected so it's testable without a real
  *  Store or hardware authenticator — see test/http_transport.test.ts). Not yet listening. */
 export function createHttpApp(ctx: HttpAppContext): Server {
-  const { gate, stores, timeoutMs, allowedHostPorts } = ctx;
+  const { gate, stores, timeoutMs, waitForApprovalMs, allowedHostPorts } = ctx;
 
   // One McpServer + one transport per MCP session, exactly as the SDK's own
   // reference server does — required so `elicitInput` (used by every tool call
@@ -54,7 +55,7 @@ export function createHttpApp(ctx: HttpAppContext): Server {
       const body = await readJsonBody(req);
       if (sid === undefined && isInitializeRequest(body)) {
         const mcp = new McpServer({ name: "secrets-webauthn-mcp", version: VERSION });
-        registerTools({ mcp, gate, stores, timeoutMs });
+        registerTools({ mcp, gate, stores, timeoutMs, waitForApprovalMs });
         const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (newSid: string) => {
@@ -115,6 +116,7 @@ export async function runServeHttp(port: number): Promise<void> {
     gate,
     stores,
     timeoutMs: env.SECRETS_GATE_TIMEOUT_MS,
+    waitForApprovalMs: env.SECRETS_WAIT_FOR_APPROVAL_MS,
     allowedHostPorts,
   });
 
@@ -125,6 +127,6 @@ export async function runServeHttp(port: number): Promise<void> {
 
   log(
     `secrets-webauthn-mcp (http) ready on http://127.0.0.1:${port}/mcp — ` +
-      `Stores: ${stores.configured.join(", ")} — Approvals served on ${gate.origin}`,
+      `Stores: ${stores.configured.join(", ")} — Approvals: open ${gate.origin} once and leave it open`,
   );
 }

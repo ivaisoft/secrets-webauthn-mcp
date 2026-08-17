@@ -298,6 +298,84 @@ await test("a reuse-window run is audited as reused, so the trail never overstat
   assert.equal(entry.reused, true, "a window-covered run must be distinguishable from a fresh touch");
 });
 
+/** A Gate that can be told to "approve while the call waits", so the blocking
+ *  path is exercised without WebAuthn hardware. */
+function makeWaitingGate(approveAfterMs: number | null) {
+  const approved = new Set<string>();
+  return {
+    origin: "http://localhost:9",
+    port: 9,
+    checkApproval(key: string) {
+      if (approved.has(key)) {
+        approved.delete(key);
+        return { approved: true, reused: false };
+      }
+      return { approved: false, reused: false };
+    },
+    waitForApproval(key: string, ms: number) {
+      if (approveAfterMs === null || approveAfterMs > ms) {
+        return new Promise<boolean>((r) => setTimeout(() => r(false), Math.min(ms, 20)));
+      }
+      return new Promise<boolean>((r) =>
+        setTimeout(() => {
+          approved.add(key); // the human touched, out of band
+          r(true);
+        }, approveAfterMs),
+      );
+    },
+  } as any;
+}
+
+function toolsWithGate(gate: any, waitForApprovalMs: number) {
+  const h: Record<string, (a: unknown) => Promise<any>> = {};
+  registerTools({
+    mcp: { server: {}, registerTool: (n: string, _c: unknown, fn: any) => { h[n] = fn; } } as any,
+    gate,
+    stores,
+    timeoutMs: 1000,
+    waitForApprovalMs,
+  });
+  return h;
+}
+
+await test("waiting: one call blocks, the approval lands, and the result comes back", async () => {
+  // The whole point — no second identical call, no approval_required round trip.
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  const h = toolsWithGate(makeWaitingGate(10), 500);
+  const r = await h["run_with_secret"]!(
+    RunWithSecretArgsSchema.parse({
+      argv: echo("process.env.API_KEY ?? 'UNSET'"),
+      secret_refs: ["bws:s1"],
+    }),
+  );
+  assert.equal(r.structuredContent.status, "ok", "the call itself produced the result");
+  assert.equal(r.isError, undefined);
+  assert.ok((r.content[0].text as string).includes(SECRET), "the child ran with the secret injected");
+});
+
+await test("waiting: on timeout it falls back to exactly the old behaviour", async () => {
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  const h = toolsWithGate(makeWaitingGate(null), 30);
+  const r = await h["run_with_secret"]!(
+    RunWithSecretArgsSchema.parse({ argv: echo("'x'"), secret_refs: ["bws:s1"] }),
+  );
+  assert.equal(r.structuredContent.status, "approval_required", "nothing is lost — the URL is returned");
+  assert.match(textOf(r), /re-run this exact tool call/i);
+});
+
+await test("waiting is off by default: no wait, immediate approval_required", async () => {
+  secretMap = { s1: { key: "API_KEY", value: SECRET } };
+  let waited = false;
+  const gate = makeWaitingGate(1);
+  const wrapped = { ...gate, waitForApproval: (...a: unknown[]) => { waited = true; return gate.waitForApproval(...(a as [string, number])); } };
+  const h = toolsWithGate(wrapped, 0);
+  const r = await h["run_with_secret"]!(
+    RunWithSecretArgsSchema.parse({ argv: echo("'x'"), secret_refs: ["bws:s1"] }),
+  );
+  assert.equal(r.structuredContent.status, "approval_required");
+  assert.equal(waited, false, "upgrading must not change behaviour until the option is set");
+});
+
 await test("audit records the tool + argv0 but never the secret", async () => {
   secretMap = { s1: { key: "API_KEY", value: SECRET } };
   await runApproved({ argv: echo("'x'"), secret_refs: ["bws:s1"] });

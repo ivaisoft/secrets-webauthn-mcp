@@ -13,7 +13,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { appendAudit } from "./audit.js";
 import { checkHostAllowed, loadAllowlist } from "./allowlist.js";
 import { resolveEnvName } from "./envname.js";
-import type { Gate } from "./gate.js";
+import type { ApprovalDecision, Gate } from "./gate.js";
 import { requestKey } from "./request-key.js";
 import { lastPathSegment, parseSecretRefs, type SecretRef, type StoreName } from "./secret-ref.js";
 import { formatArgv } from "./shell-format.js";
@@ -34,6 +34,11 @@ interface ToolContext {
   gate: Gate;
   stores: StoreRegistry;
   timeoutMs: number;
+  /** How long a call waits for its Approval before falling back to returning
+   *  the URL. 0 keeps the original behaviour: return immediately, human
+   *  re-issues. Never longer than the pending entry's own TTL — waiting past
+   *  that would be waiting on an entry the sweep has already dropped. */
+  waitForApprovalMs?: number;
 }
 
 type ToolResult = {
@@ -59,10 +64,10 @@ function approvalRequired(message: string, url: string): ToolResult {
   };
 }
 
-function errorResult(reason: string): ToolResult {
+function errorResult(reason: string, extra?: Record<string, unknown>): ToolResult {
   return {
     content: [{ type: "text", text: reason }],
-    structuredContent: { status: "error", reason },
+    structuredContent: { status: "error", reason, ...extra },
     isError: true,
   };
 }
@@ -165,6 +170,25 @@ function emptyListExplanation(
 
 export function registerTools(ctx: ToolContext): void {
   const { mcp, gate, stores, timeoutMs } = ctx;
+  const waitMs = Math.min(Math.max(0, ctx.waitForApprovalMs ?? 0), timeoutMs);
+
+  /**
+   * Check, and — when configured — wait for the Approval rather than handing
+   * the URL back and asking for the call again.
+   *
+   * The pending entry is registered by the first checkApproval, so the request
+   * is already listed in the console before the wait begins: that is where the
+   * human sees it. On timeout nothing is lost — the entry stays pending, and
+   * the caller falls back to exactly the pre-waiting behaviour.
+   */
+  async function awaitApproval(key: string, message: string): Promise<ApprovalDecision> {
+    const first = gate.checkApproval(key, message, timeoutMs);
+    if (first.approved || waitMs === 0) return first;
+    if (!(await gate.waitForApproval(key, waitMs))) return first;
+    // Re-check rather than assume: consumption and reuse windows live in
+    // checkApproval, and duplicating either here is how they drift apart.
+    return gate.checkApproval(key, message, timeoutMs);
+  }
 
   mcp.registerTool(
     "list_secrets",
@@ -252,7 +276,20 @@ export function registerTools(ctx: ToolContext): void {
       const check = checkHostAllowed(loadAllowlist(), raws, host);
       if (!check.ok) {
         appendAudit({ tool: "http_request", secret_refs: raws, host, verified: false });
-        return errorResult(`Blocked by allowlist: ${check.reason}`);
+        if (check.ref === undefined) return errorResult(`Blocked by allowlist: ${check.reason}`);
+        // Offer the fix, on its own page. Widening the allowlist and using a
+        // secret are different decisions, so they never share a screen: this
+        // link grants the host and nothing else, and the call still has to come
+        // back through the Gate on its own afterwards.
+        const grantUrl = gate.requestHostGrant(check.ref, host, timeoutMs);
+        return errorResult(
+          `Blocked by allowlist: ${check.reason}.\n\n` +
+            `To allow "${host}" for ${check.ref}, open this and confirm with Touch ID / passkey:\n` +
+            `${grantUrl}\n\n` +
+            `That only widens the allowlist — it does not approve this call. Re-issue the call ` +
+            `afterwards and approve it as usual.`,
+          { grant_url: grantUrl },
+        );
       }
 
       let headerNames: string[];
@@ -268,7 +305,7 @@ export function registerTools(ctx: ToolContext): void {
         `http_request wants to use secret(s) [${raws.join(", ")}] ` +
         `to call host "${host}" (${args.method} ${args.url}).`;
       const key = requestKey("http_request", args);
-      const decision = gate.checkApproval(key, message, timeoutMs);
+      const decision = await awaitApproval(key, message);
       if (!decision.approved) {
         appendAudit({ tool: "http_request", secret_refs: raws, host, verified: false });
         return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);
@@ -376,7 +413,7 @@ export function registerTools(ctx: ToolContext): void {
         `run_with_secret wants to run (no shell):\n  ${formatArgv(args.argv)}\n` +
         `Injecting as env vars: ${envDisplay}`;
       const key = requestKey("run_with_secret", args);
-      const decision = gate.checkApproval(key, message, timeoutMs);
+      const decision = await awaitApproval(key, message);
       if (!decision.approved) {
         appendAudit({ tool: "run_with_secret", secret_refs: raws, argv0, verified: false });
         return approvalRequired(message, `${gate.origin}/approve?rid=${key}`);

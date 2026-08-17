@@ -67,6 +67,22 @@ npx -y @ivaisoft/secrets-webauthn-mcp register
 # 2. Wire it into your MCP client (see "Wire into Claude Code" below)
 ```
 
+Set `SECRETS_WAIT_FOR_APPROVAL_MS` (e.g. `60000`) and the two-call dance
+disappears: the call **waits** while you approve in the console, then runs and
+returns its result. One call, one result. If the wait elapses it falls back to
+returning the Approval URL exactly as before, so nothing is lost — and it is off
+by default, so upgrading changes nothing until you set it.
+
+The wait is capped by `SECRETS_GATE_TIMEOUT_MS`, and it is only useful with the
+console open, since that is where the request appears while the call is blocked.
+
+**Open the console once and leave it open.** The server prints its URL on
+startup (`Approvals: open http://localhost:… once and leave it open`). Requests
+appear there live as the agent makes them, each with its own Approve button — so
+you tap Touch ID in one tab instead of opening a new one per call. The approval
+URLs in tool output still work; the console is just where they all show up
+together.
+
 Then just ask the agent to use a secret. It calls `list_secrets` to find the
 right `id`, then `http_request` or `run_with_secret`. The first attempt
 returns an Approval URL instead of doing anything; you open it and tap Touch
@@ -266,6 +282,25 @@ to the hosts it may be sent to (missing entry = deny):
 Keys are references exactly as written in a tool call, so an entry grants hosts
 to one secret in one Store — never to a bare id two Stores might both claim.
 
+You rarely edit it by hand. When `http_request` is blocked, the error carries a
+link to a page that adds that one host for that one reference, confirmed with a
+touch:
+
+```
+Blocked by allowlist: host api.stripe.com not allowed for secret bws:9f3c….
+
+To allow "api.stripe.com" for bws:9f3c…, open this and confirm with Touch ID / passkey:
+http://localhost:53124/allowlist?gid=…
+
+That only widens the allowlist — it does not approve this call. Re-issue the call
+afterwards and approve it as usual.
+```
+
+**Two touches, deliberately.** Granting a host and using a secret are different
+decisions, so they never share a screen: the grant page cannot approve a call,
+and the approval page cannot widen the allowlist. Clients get the link as
+`grant_url` in `structuredContent`, not only in prose.
+
 ## Wire into Claude Code
 
 ```bash
@@ -376,6 +411,7 @@ vault token's confinement to this process are identical to stdio mode.
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
 | `SECRETS_REUSE_MAX_MS` | `0` (off) | longest Reuse Window a human may grant at the Gate |
 | `SECRETS_REUSE_MAX_USES` | `5` | most runs one Reuse Window may cover |
+| `SECRETS_WAIT_FOR_APPROVAL_MS` | `0` (off) | how long a call waits for its Approval instead of returning the URL |
 
 At least one Store must be configured or startup fails. Setting `AWS_REGION`
 without an AWS credential is an error too — never a silent fall-through to
