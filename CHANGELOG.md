@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.2...v2.6.0) (2026-08-17)
+
+
+### Features
+
+* approval console, host grants from a link, and waiting for the Approval ([#18](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/18)) ([a175e47](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/a175e471e141d3bbc4c7222c883988256268d9e0))
+
 ## [2.5.2](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.1...v2.5.2) (2026-08-10)
 
 
