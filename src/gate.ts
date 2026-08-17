@@ -11,7 +11,7 @@
 // ANY MCP client — telling the human to open a URL and then re-issue the
 // identical call; that second call finds its request-key already verified.
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
@@ -132,6 +132,97 @@ export async function startGate(options: GateOptions): Promise<Gate> {
     }
   }
 
+  // Live console plumbing. Every connected browser gets a snapshot whenever the
+  // pending sets change, so one tab stays useful for a whole session instead of
+  // a new tab per approval. This changes only WHERE a human touches: each entry
+  // still carries its own challenge and needs its own assertion.
+  const streams = new Set<ServerResponse>();
+
+  /** Pre-highlighted on the server so escaping stays in highlight.ts — the
+   *  browser only ever inserts HTML this process produced. */
+  function snapshot(): string {
+    const now = Date.now();
+    return JSON.stringify({
+      approvals: [...pending.entries()].map(([rid, entry]) => ({
+        rid,
+        html: highlightMessage(entry.message),
+        verified: entry.verified,
+        secondsLeft: Math.max(0, Math.round((entry.expiresAt - now) / 1000)),
+        reuseLeft: entry.reuse && entry.reuse.until > now ? entry.reuse.remaining : 0,
+      })),
+      grants: [...grants.entries()].map(([gid, grant]) => ({
+        gid,
+        html: highlightMessage(`Allow host "${grant.host}" for secret ${grant.ref}`),
+        secondsLeft: Math.max(0, Math.round((grant.expiresAt - now) / 1000)),
+      })),
+    });
+  }
+
+  function notifyChange(): void {
+    if (streams.size === 0) return;
+    const payload = `data: ${snapshot()}\n\n`;
+    for (const stream of streams) stream.write(payload);
+  }
+
+  // Entries also disappear by expiring, which no request triggers — without this
+  // the console would keep showing a prompt that the server already dropped.
+  const ticker = setInterval(() => {
+    const before = pending.size + grants.size;
+    sweepExpired();
+    if (pending.size + grants.size !== before) notifyChange();
+  }, 5_000);
+  ticker.unref();
+
+  const consolePage = (): string =>
+    page(
+      "Pending approvals",
+      `<p class="lede">Leave this tab open. Requests appear here as the agent makes them, and each one
+still needs its own Touch ID / passkey — this only saves you opening a new tab every time.</p>
+<div id="list"><p class="hint">Waiting for requests…</p></div>
+<script>
+function h(s){return s;}
+function render(state){
+  var el=document.getElementById('list');
+  var out='';
+  state.approvals.forEach(function(a){
+    out += '<div class="item"><pre class="code">'+a.html+'</pre>'
+      + (a.verified
+          ? '<p class="hint">\\u2705 Approved'+(a.reuseLeft?' \\u2014 '+a.reuseLeft+' more run(s) allowed':'')+'. Re-run the call.</p>'
+          : '<p class="hint">Expires in ~'+a.secondsLeft+'s</p>'
+            + '<button class="btn btn-primary" onclick="approve(\\''+a.rid+'\\',this)">Approve with Touch ID / passkey</button>')
+      + '</div>';
+  });
+  state.grants.forEach(function(g){
+    out += '<div class="item"><pre class="code">'+g.html+'</pre>'
+      + '<p class="hint">Widens the allowlist only \\u2014 does not approve any call. Expires in ~'+g.secondsLeft+'s</p>'
+      + '<button class="btn" onclick="grant(\\''+g.gid+'\\',this)">Allow host with Touch ID / passkey</button></div>';
+  });
+  el.innerHTML = out || '<p class="hint">Nothing pending.</p>';
+}
+async function run(btn, optionsUrl, verifyUrl, okKey){
+  var s=document.getElementById('status');
+  var label=btn.textContent;
+  btn.disabled=true; btn.textContent='Waiting for Touch ID / passkey…';
+  try{
+    var o=await fetch(optionsUrl).then(function(r){return r.json();});
+    var a=await SimpleWebAuthnBrowser.startAuthentication({optionsJSON:o});
+    var r=await fetch(verifyUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(a)}).then(function(r){return r.json();});
+    s.textContent = r[okKey] ? '\\u2705 Done.' : '\\u274c '+(r.error||'not verified');
+  }catch(e){ s.textContent='\\u274c '+e; }
+  finally { btn.disabled=false; btn.textContent=label; }
+}
+function approve(rid, btn){
+  run(btn,'/approve/options?rid='+encodeURIComponent(rid),'/approve/verify?rid='+encodeURIComponent(rid),'verified');
+}
+function grant(gid, btn){
+  run(btn,'/allowlist/options?gid='+encodeURIComponent(gid),'/allowlist/verify?gid='+encodeURIComponent(gid),'granted');
+}
+var src=new EventSource('/events');
+src.onmessage=function(e){ render(JSON.parse(e.data)); };
+src.onerror=function(){ document.getElementById('status').textContent='\\u26a0\\ufe0f Disconnected \\u2014 is the server still running?'; };
+</script>`,
+    );
+
   const grantPage = (id: string, grant: PendingGrant): string =>
     page(
       "Allow a new host",
@@ -242,6 +333,20 @@ async function go(){
       const path = url.pathname;
 
       if (path === "/health") return send(res, 200, "text/plain", "ok");
+
+      if (path === "/") return send(res, 200, "text/html", consolePage());
+
+      if (path === "/events") {
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(`data: ${snapshot()}\n\n`);
+        streams.add(res);
+        req.on("close", () => streams.delete(res));
+        return;
+      }
       if (path === "/browser.js") return send(res, 200, "text/javascript", BROWSER_BUNDLE);
 
       // Serve mode never serves /register — registration is a standalone process.
@@ -286,6 +391,7 @@ async function go(){
         const checked = await verifyAssertion(req, entry.challenge);
         if (!checked.ok) return sendJson(res, 400, { verified: false, error: checked.error });
         entry.verified = true;
+        notifyChange();
 
         // The window the human asked for, clamped by config. Never trust the
         // page: this is a query parameter, and the cap is the actual boundary.
@@ -340,6 +446,7 @@ async function go(){
         // Widening the allowlist is the only write here; it never approves a use.
         addAllowedHost(grant.ref, grant.host);
         grants.delete(id);
+        notifyChange();
         return sendJson(res, 200, { granted: true });
       }
 
@@ -367,9 +474,11 @@ async function go(){
       const { decision, spend } = decideVerified(existing.reuse, Date.now());
       if (decision.reused && existing.reuse) existing.reuse.remaining -= 1;
       if (spend) pending.delete(key);
+      notifyChange();
       return decision;
     }
     pending.set(key, { message, verified: false, expiresAt: Date.now() + ttlMs });
+    notifyChange();
     return DENIED;
   }
 
@@ -377,6 +486,7 @@ async function go(){
     sweepExpired();
     const id = randomUUID();
     grants.set(id, { ref, host, expiresAt: Date.now() + ttlMs });
+    notifyChange();
     return `${origin}/allowlist?gid=${id}`;
   }
 
@@ -385,6 +495,11 @@ async function go(){
     port,
     requestHostGrant,
     checkApproval,
-    close: () => httpServer.close(),
+    close: () => {
+      clearInterval(ticker);
+      for (const stream of streams) stream.end();
+      streams.clear();
+      httpServer.close();
+    },
   };
 }

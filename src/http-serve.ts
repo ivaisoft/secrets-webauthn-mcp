@@ -125,6 +125,6 @@ export async function runServeHttp(port: number): Promise<void> {
 
   log(
     `secrets-webauthn-mcp (http) ready on http://127.0.0.1:${port}/mcp — ` +
-      `Stores: ${stores.configured.join(", ")} — Approvals served on ${gate.origin}`,
+      `Stores: ${stores.configured.join(", ")} — Approvals: open ${gate.origin} once and leave it open`,
   );
 }

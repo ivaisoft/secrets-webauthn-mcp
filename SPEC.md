@@ -118,6 +118,7 @@ forever waiting on it). Instead:
 
 - `rpID = "localhost"`, `expectedOrigin = "http://localhost:<port>"`, `userVerification: "required"`.
 - Pending entries are swept on every check; unapproved ones expire after `ttlMs` (`SECRETS_GATE_TIMEOUT_MS`).
+- **Console (`/`):** one page, kept open for a session, listing every pending Approval and host grant and updating live over SSE (`/events`). Each entry still carries its own challenge and needs its own assertion — this changes only *where* a human touches, never *what* the touch proves, so it is ergonomics with no effect on the security model. Messages are highlighted server-side and sent as HTML, so escaping stays in `highlight.ts` and the browser only inserts markup this process produced. A 5s ticker sweeps and re-notifies, since entries also vanish by expiring, which no request would otherwise announce.
 - **One Approval is one assertion.** Dual / M-of-N Approval was considered and dropped — it only ever guarded a Store bootstrapping another's credential, which ADR 0009 removed.
 - **Reuse Window (ADR 0011):** at the Gate the human may grant the byte-identical request a window, bounded by elapsed time *and* remaining runs — whichever ends first. Keyed on the request key, so no other call is covered. Needs two opt-ins: `SECRETS_REUSE_MAX_MS` in config, and a duration chosen on the approve page. `decideVerified` holds the rule and `selfcheck` asserts it. Audited as `reused: true`.
 

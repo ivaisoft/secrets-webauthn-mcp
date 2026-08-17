@@ -93,6 +93,34 @@ if (connectError === undefined) {
     assert.match(String(structured.approve_url), /^http:\/\/localhost:\d+\/approve\?rid=[0-9a-f]{64}$/);
   });
 
+  // The console is the thing a human actually keeps open, so it is worth
+  // proving it serves and reflects real state — not just that the endpoint
+  // exists. The origin comes from the approval URL the server just handed us.
+  const gateOrigin = new URL(
+    String((gated.structuredContent as { approve_url?: string }).approve_url),
+  ).origin;
+
+  const consoleHtml = await fetch(`${gateOrigin}/`).then((r) => r.text());
+  check("the Gate serves a console page at /", () => {
+    assert.match(consoleHtml, /Pending approvals/);
+    assert.match(consoleHtml, /EventSource\('\/events'\)/, "it subscribes for live updates");
+  });
+
+  // Read one SSE frame and stop; the stream stays open by design.
+  const events = await fetch(`${gateOrigin}/events`);
+  const reader = events.body!.getReader();
+  const firstFrame = new TextDecoder().decode((await reader.read()).value!);
+  await reader.cancel();
+
+  check("/events pushes a snapshot that includes the pending approval", () => {
+    assert.match(firstFrame, /^data: /, "SSE framing");
+    const state = JSON.parse(firstFrame.replace(/^data: /, "").trim());
+    assert.equal(state.approvals.length, 1, "the call waiting for approval is listed");
+    assert.equal(state.approvals[0].verified, false);
+    assert.match(state.approvals[0].html, /run_with_secret/, "with the message a human reviews");
+    assert.ok(!JSON.stringify(state).includes("smoke-test-value"), "and never a secret value");
+  });
+
   // An unprefixed id is a caller bug: the server must say so rather than
   // spending a physical touch discovering it.
   const malformed = await client.callTool({

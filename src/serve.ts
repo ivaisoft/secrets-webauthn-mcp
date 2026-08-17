@@ -26,6 +26,6 @@ export async function runServe(): Promise<void> {
   await mcp.connect(new StdioServerTransport());
   log(
     `secrets-webauthn-mcp ready — Stores: ${stores.configured.join(", ")} — ` +
-      `Approvals served on ${gate.origin}`,
+      `Approvals: open ${gate.origin} once and leave it open`,
   );
 }

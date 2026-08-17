@@ -67,6 +67,13 @@ npx -y @ivaisoft/secrets-webauthn-mcp register
 # 2. Wire it into your MCP client (see "Wire into Claude Code" below)
 ```
 
+**Open the console once and leave it open.** The server prints its URL on
+startup (`Approvals: open http://localhost:… once and leave it open`). Requests
+appear there live as the agent makes them, each with its own Approve button — so
+you tap Touch ID in one tab instead of opening a new one per call. The approval
+URLs in tool output still work; the console is just where they all show up
+together.
+
 Then just ask the agent to use a secret. It calls `list_secrets` to find the
 right `id`, then `http_request` or `run_with_secret`. The first attempt
 returns an Approval URL instead of doing anything; you open it and tap Touch
