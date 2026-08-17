@@ -85,6 +85,17 @@ export interface Gate {
    *  case the entry survives with one fewer use. Otherwise (re)registers
    *  `message` as pending for `key`, valid for `ttlMs`, and returns not-approved. */
   checkApproval(key: string, message: string, ttlMs: number): ApprovalDecision;
+  /**
+   * Resolve true once `key`'s pending entry is verified, or false if `ms`
+   * elapses first. Does NOT consume the approval — the caller re-runs
+   * checkApproval, so consumption and reuse windows stay in exactly one place.
+   *
+   * The re-issue dance ADR 0006 introduced was never a security property: a
+   * different call is a different request key and finds nothing approved. It
+   * exists only because the tool returned instead of waiting. Waiting here lets
+   * one call produce one result, with the same guarantee.
+   */
+  waitForApproval(key: string, ms: number): Promise<boolean>;
   close(): void;
 }
 
@@ -137,6 +148,38 @@ export async function startGate(options: GateOptions): Promise<Gate> {
   // a new tab per approval. This changes only WHERE a human touches: each entry
   // still carries its own challenge and needs its own assertion.
   const streams = new Set<ServerResponse>();
+  /** Callers blocked in waitForApproval, by request key. */
+  const waiters = new Map<string, Set<() => void>>();
+
+  function wakeWaiters(key: string): void {
+    const set = waiters.get(key);
+    if (!set) return;
+    waiters.delete(key);
+    for (const wake of set) wake();
+  }
+
+  function waitForApproval(key: string, ms: number): Promise<boolean> {
+    if (ms <= 0) return Promise.resolve(false);
+    if (pending.get(key)?.verified === true) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const wake = (): void => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        // On timeout the entry stays pending and, if the human approves later,
+        // verified — so the caller's fallback (return the Approval URL, human
+        // re-issues) still works exactly as it did before waiting existed.
+        waiters.get(key)?.delete(wake);
+        if (waiters.get(key)?.size === 0) waiters.delete(key);
+        resolve(false);
+      }, ms);
+      timer.unref();
+      const set = waiters.get(key) ?? new Set<() => void>();
+      set.add(wake);
+      waiters.set(key, set);
+    });
+  }
 
   /** Pre-highlighted on the server so escaping stays in highlight.ts — the
    *  browser only ever inserts HTML this process produced. */
@@ -392,6 +435,7 @@ async function go(){
         if (!checked.ok) return sendJson(res, 400, { verified: false, error: checked.error });
         entry.verified = true;
         notifyChange();
+        wakeWaiters(key);
 
         // The window the human asked for, clamped by config. Never trust the
         // page: this is a query parameter, and the cap is the actual boundary.
@@ -495,8 +539,10 @@ async function go(){
     port,
     requestHostGrant,
     checkApproval,
+    waitForApproval,
     close: () => {
       clearInterval(ticker);
+      for (const key of [...waiters.keys()]) wakeWaiters(key);
       for (const stream of streams) stream.end();
       streams.clear();
       httpServer.close();

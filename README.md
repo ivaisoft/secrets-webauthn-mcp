@@ -67,6 +67,15 @@ npx -y @ivaisoft/secrets-webauthn-mcp register
 # 2. Wire it into your MCP client (see "Wire into Claude Code" below)
 ```
 
+Set `SECRETS_WAIT_FOR_APPROVAL_MS` (e.g. `60000`) and the two-call dance
+disappears: the call **waits** while you approve in the console, then runs and
+returns its result. One call, one result. If the wait elapses it falls back to
+returning the Approval URL exactly as before, so nothing is lost — and it is off
+by default, so upgrading changes nothing until you set it.
+
+The wait is capped by `SECRETS_GATE_TIMEOUT_MS`, and it is only useful with the
+console open, since that is where the request appears while the call is blocked.
+
 **Open the console once and leave it open.** The server prints its URL on
 startup (`Approvals: open http://localhost:… once and leave it open`). Requests
 appear there live as the agent makes them, each with its own Approve button — so
@@ -402,6 +411,7 @@ vault token's confinement to this process are identical to stdio mode.
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
 | `SECRETS_REUSE_MAX_MS` | `0` (off) | longest Reuse Window a human may grant at the Gate |
 | `SECRETS_REUSE_MAX_USES` | `5` | most runs one Reuse Window may cover |
+| `SECRETS_WAIT_FOR_APPROVAL_MS` | `0` (off) | how long a call waits for its Approval instead of returning the URL |
 
 At least one Store must be configured or startup fails. Setting `AWS_REGION`
 without an AWS credential is an error too — never a silent fall-through to

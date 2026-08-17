@@ -93,6 +93,12 @@ export const ServeEnvSchema = BwsEnvSchema.merge(AwsEnvSchema)
     /** Most executions a single reuse window may cover. Time alone would be a
      *  blank cheque: the human cannot know how many runs they authorized. */
     SECRETS_REUSE_MAX_USES: z.coerce.number().int().positive().default(5),
+    /** How long a gated call waits for its Approval before returning the URL
+     *  for the human to open and the call to be re-issued. 0 (the default)
+     *  keeps the original two-call flow, so upgrading changes nothing. Waiting
+     *  is capped by SECRETS_GATE_TIMEOUT_MS and only useful with the approval
+     *  console open, since that is where the request appears while you wait. */
+    SECRETS_WAIT_FOR_APPROVAL_MS: z.coerce.number().int().nonnegative().default(0),
   })
   .superRefine((env, ctx) => {
     const issue = (message: string): void => {

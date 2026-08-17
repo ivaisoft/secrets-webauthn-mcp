@@ -118,6 +118,7 @@ forever waiting on it). Instead:
 
 - `rpID = "localhost"`, `expectedOrigin = "http://localhost:<port>"`, `userVerification: "required"`.
 - Pending entries are swept on every check; unapproved ones expire after `ttlMs` (`SECRETS_GATE_TIMEOUT_MS`).
+- **Waiting for the Approval:** with `SECRETS_WAIT_FOR_APPROVAL_MS` set, a gated call registers its pending entry (so it appears in the console) and then blocks until that entry is verified, re-runs `checkApproval` to consume it, and returns the real result — one call, one result. The re-issue this replaces was never a security property: a call differing in any argument is a different request key and finds nothing approved, so waiting proves exactly what the two-call flow proved. On timeout the entry stays pending and the tool returns the Approval URL, which is the pre-existing behaviour unchanged; off by default. Consumption and Reuse Windows stay solely in `checkApproval` — the waiter never approves anything itself.
 - **Console (`/`):** one page, kept open for a session, listing every pending Approval and host grant and updating live over SSE (`/events`). Each entry still carries its own challenge and needs its own assertion — this changes only *where* a human touches, never *what* the touch proves, so it is ergonomics with no effect on the security model. Messages are highlighted server-side and sent as HTML, so escaping stays in `highlight.ts` and the browser only inserts markup this process produced. A 5s ticker sweeps and re-notifies, since entries also vanish by expiring, which no request would otherwise announce.
 - **One Approval is one assertion.** Dual / M-of-N Approval was considered and dropped — it only ever guarded a Store bootstrapping another's credential, which ADR 0009 removed.
 - **Reuse Window (ADR 0011):** at the Gate the human may grant the byte-identical request a window, bounded by elapsed time *and* remaining runs — whichever ends first. Keyed on the request key, so no other call is covered. Needs two opt-ins: `SECRETS_REUSE_MAX_MS` in config, and a duration chosen on the approve page. `decideVerified` holds the rule and `selfcheck` asserts it. Audited as `reused: true`.
@@ -153,6 +154,7 @@ AWS Stores, `SECRETS_*` the server itself.
 | `SECRETS_HTTP_PORT` | `8787` | only read by `serve --http` |
 | `SECRETS_REUSE_MAX_MS` | `0` (off) | longest Reuse Window grantable at the Gate (ADR 0011) |
 | `SECRETS_REUSE_MAX_USES` | `5` | most runs one Reuse Window may cover |
+| `SECRETS_WAIT_FOR_APPROVAL_MS` | `0` (off) | wait this long for the Approval instead of returning its URL; capped by the Gate timeout |
 
 At least one Store must be configured, or startup fails.
 

@@ -21,7 +21,13 @@ export async function runServe(): Promise<void> {
   const stores = await connectStores(env, log);
 
   const mcp = new McpServer({ name: "secrets-webauthn-mcp", version: VERSION });
-  registerTools({ mcp, gate, stores, timeoutMs: env.SECRETS_GATE_TIMEOUT_MS });
+  registerTools({
+    mcp,
+    gate,
+    stores,
+    timeoutMs: env.SECRETS_GATE_TIMEOUT_MS,
+    waitForApprovalMs: env.SECRETS_WAIT_FOR_APPROVAL_MS,
+  });
 
   await mcp.connect(new StdioServerTransport());
   log(
