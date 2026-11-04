@@ -369,6 +369,31 @@ also works, with one caveat: the DNS-rebinding guard rejects any unrecognized
 `Origin` with a `403`. Non-browser clients don't send one and pass fine — but
 if your client does, use STDIO instead.
 
+### If the client says only "Connection closed"
+
+That message means the server process exited before it spoke MCP, so the client
+has nothing to report but the closed transport. It is never specific — the same
+text covers a wrong command path, a missing `node`, and a crash at startup.
+
+Run the same command by hand with the same environment and read stderr, which is
+where the actual reason goes:
+
+```bash
+npx -y @ivaisoft/secrets-webauthn-mcp serve </dev/null
+```
+
+A server that is healthy prints a `ready` banner and waits. One that exits
+prints the reason and stops — a missing variable, an unparseable
+`SSM_PATH_PREFIX`, a port already in use.
+
+Credential problems are no longer in that list. A Store that cannot connect —
+an expired `BWS_ACCESS_TOKEN`, no route to Bitwarden, a platform without the
+native prebuilt — does not stop the server starting; it surfaces as an error on
+the first tool call that needs that Store, and the other Stores keep working
+([ADR 0012](./docs/adr/0012-stores-connect-on-first-use-not-at-startup.md)).
+`list_secrets` shows it without needing an Approval, under
+"Stores that failed to list".
+
 ## Streamable HTTP (opt-in, loopback-only)
 
 stdio is the default and is the more restrictive option — only the process a

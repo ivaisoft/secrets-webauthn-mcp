@@ -26,8 +26,10 @@ export const AuthenticatorAttachmentSchema = z.enum(["platform", "cross-platform
 export const BwsEnvSchema = z.object({
   BWS_ACCESS_TOKEN: z.string().min(1).optional(),
   /** A machine account belongs to exactly one org; list_secrets needs it explicitly
-   *  (the SDK has no "list my orgs" call — required so misconfiguration fails at
-   *  startup, not with a confusing error the first time list_secrets is called). */
+   *  (the SDK has no "list my orgs" call). Required, so that a token without an org
+   *  is rejected at startup: its SHAPE is knowable locally and cannot change while
+   *  the server runs. Whether the token is still VALID is not, and is checked on
+   *  first use instead — see ADR 0012. */
   BWS_ORGANIZATION_ID: z.string().min(1).optional(),
   BWS_API_URL: z.string().url().default("https://api.bitwarden.com"),
   BWS_IDENTITY_URL: z.string().url().default("https://identity.bitwarden.com"),

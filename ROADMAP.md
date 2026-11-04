@@ -16,7 +16,12 @@ reasoning behind what's already here before assuming a "should" below is easy.
   misconfiguration up front: missing `BWS_ORGANIZATION_ID`, an empty
   `allowlist.json`, no registered credentials, or — the one that actually bit
   us — a browser/OS routing WebAuthn "platform" requests through a password
-  manager instead of Touch ID.
+  manager instead of Touch ID. It is also where a **Store connectivity probe**
+  belongs: since [ADR 0012](./docs/adr/0012-stores-connect-on-first-use-not-at-startup.md)
+  Stores connect on first use, so nothing checks a credential until something
+  needs it. `list_secrets` covers the enumerable Stores; `doctor` could report on
+  all of them at once, and deliberately, rather than dying at startup on the first
+  failure the way this server used to.
 - **Allowlist *read* tool.** A blocked `http_request` now offers a link to grant
   that one host for that one reference after a touch, so the file is no longer
   hand-edited in practice. What is still missing is a way to *see* the current
