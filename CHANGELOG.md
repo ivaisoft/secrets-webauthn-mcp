@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.6.0...v2.6.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* connect Stores on first use so a bad credential cannot kill startup ([#19](https://github.com/ivaisoft/secrets-webauthn-mcp/issues/19)) ([8509d11](https://github.com/ivaisoft/secrets-webauthn-mcp/commit/8509d11f7ff9dd779ed78dd0a19600906a59dc2b))
+
 # [2.6.0](https://github.com/ivaisoft/secrets-webauthn-mcp/compare/v2.5.2...v2.6.0) (2026-08-17)
 
 
